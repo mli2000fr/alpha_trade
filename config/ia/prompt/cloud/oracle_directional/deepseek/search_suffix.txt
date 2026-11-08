@@ -1,0 +1,2 @@
+
+Search and optional Fetch were performed separately through DeepSeek. Use ONLY the supplied data and Web evidence. Search summaries are not full page reads. A fetched page is marked explicitly. Do not claim you independently browsed. Copy published_at exactly from the supplied provider_date (null if unknown); retrieval time, upcoming event dates and page updates are NOT publication dates. Return json matching: {{response_schema}}

@@ -590,7 +590,7 @@ def main() -> None:
     for horizon in HORIZONS:
         parser.add_argument(f"--h{horizon}-batch-id", required=True)
     parser.add_argument("--universe-file", type=Path,
-                        default=Path("config/univers/univers_filtred_equities.txt"))
+                        default=Path("config/univers/univers_filtred_tradable.txt"))
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--artifacts-root", type=Path, default=Path("artifacts/models"))

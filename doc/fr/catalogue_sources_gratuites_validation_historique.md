@@ -168,7 +168,11 @@ ne deviennent pas validées par extrapolation du premier Full.
 - Modules : `service/fr/esma_firds_download.py`, `esma_firds_history.py`,
   `esma_firds_annual_chain.py`, `esma_firds_gap_audit.py`,
   `esma_firds_full_reconcile.py`, `esma_firds_bar_coverage.py`.
-- Archives/rejeu : `artifacts/fr/esma_firds/replay_2018`.
+- Archives/rejeu : clés logiques `esma_firds/replay_2018` dans les tables
+  `fr_collection_*` de `alpha_trade_fr`, via `service/fr/firds_storage.py`.
+  Les chemins historiques restent utilisables par les lecteurs raccordés ;
+  les copies locales de 59,903 Go ont été supprimées après validation le
+  06/11/2026. [Migration et contrôles](import_archives_firds_sql_20261106.md).
 - Identités consommées par les contrôles économiques :
   `artifacts/fr/sprint6c_reference/identities.jsonl.gz` et son `report.json`.
 - Détails : [rejeu et contrôles Sprint 5](sprint_5_intervalles_esma_prix_radies_actions_2026-10-02.md).

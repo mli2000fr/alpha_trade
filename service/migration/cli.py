@@ -42,6 +42,20 @@ def run_request(request,job,*,tracker=None):
         result=engine.verify(request['folder'],password,cancel=cancel,on_progress=report)
         emit(report,'FINISHED')
         return dict(status='VERIFIED',backup_id=result['id'],source_mode=result.get('source_mode'))
+    if action in ('plan_files_only','restore_files_only'):
+        # Deliberately before adapter(): no MySQL client, credentials or connection.
+        from .files_only import inspect_files_only,restore_files_only
+        if action=='plan_files_only':
+            result=inspect_files_only(request['folder'],request['target'],password,on_progress=report)
+        else:
+            deadline=time.monotonic()+int(request.get('wait_seconds',900))
+            while inventory.quiescent(request['target'],allow_ui=False):
+                engine.check_cancel(cancel)
+                if time.monotonic()>=deadline:raise ValueError('Le PC cible est toujours utilisé : fichiers non restaurés')
+                worker_status(job,'WAITING_FOR_TARGET_STOP');emit(report,'WAITING_FOR_TARGET_STOP');time.sleep(2)
+            result=restore_files_only(request['folder'],request['target'],password,request['report_dir'],
+                approved_plan=request['approved_plan'],cancel=cancel,on_progress=report)
+        emit(report,'FINISHED');return result
     db=adapter(request)
     db.on_progress=report
     if action=='export':
@@ -51,7 +65,7 @@ def run_request(request,job,*,tracker=None):
     if action=='plan':
         result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report)
         emit(report,'FINISHED');return result
-    if action=='restore':
+    if action in ('restore','restore_files'):
         deadline=time.monotonic()+int(request.get('wait_seconds',900))
         while inventory.quiescent(request['target'],allow_ui=False):
             engine.check_cancel(cancel)
@@ -59,8 +73,13 @@ def run_request(request,job,*,tracker=None):
             worker_status(job,'WAITING_FOR_TARGET_STOP')
             emit(report,'WAITING_FOR_TARGET_STOP')
             time.sleep(2)
-        report=engine.restore(request['folder'],request['target'],password,db,request['report_dir'],
-            approved_plan=request['approved_plan'],cancel=cancel,on_progress=tracker.update)
+        if action=='restore':
+            report=engine.restore(request['folder'],request['target'],password,db,request['report_dir'],
+                approved_plan=request['approved_plan'],cancel=cancel,on_progress=tracker.update,
+                skip_existing_backup=bool(request.get('skip_existing_backup',False)))
+        else:
+            report=engine.restore_files(request['folder'],request['target'],password,db,request['report_dir'],
+                cancel=cancel,on_progress=tracker.update)
         if request.get('rebuild_venv',True):
             worker_status(job,'BUILDING_PYTHON')
             emit(tracker.update,'BUILDING_PYTHON')
@@ -158,12 +177,23 @@ def main(argv=None):
         return 0
     except BaseException as exc:
         # Never persist repr(request), SQL parameters or raw provider exceptions.
-        atomic_json(job/'progress.json',dict(status='CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
-            error_type=type(exc).__name__,message=getattr(exc,'public_message',None) or (str(exc) if type(exc) is ValueError or isinstance(exc,MigrationLockError) else 'Consulter le rapport de phase ; aucune relance automatique.'),
+        report_progress={}
+        try:
+            if request.get('action') in ('restore','restore_files'):
+                report_progress=json.loads((Path(request['report_dir'])/'progress.json').read_text(encoding='utf-8'))
+        except (NameError,KeyError,OSError,ValueError):pass
+        pending=report_progress.get('status')=='FILES_PENDING'
+        public_message=getattr(exc,'public_message',None) or (
+            str(exc) if type(exc) is ValueError or isinstance(exc,(MigrationLockError,engine.FileInstallError))
+            else 'Consulter le rapport de phase ; aucune relance automatique.')
+        atomic_json(job/'progress.json',dict(status='FILES_PENDING' if pending else 'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
+            error_type=type(exc).__name__,message=public_message,
             updated_at=engine.utc(),**failure_details(exc)))
-        if tracker and tracker.state.get('phase') not in ('FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE'):
+        if tracker and tracker.state.get('phase') not in ('FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
+                                                        'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED'):
             extra=dict(error_code=exc.code,owner_pid=exc.owner_pid) if isinstance(exc,MigrationLockError) else {}
-            emit(tracker.update,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra)
+            emit(tracker.update,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
+                 failure_reason=public_message,**extra)
         return 1
 
 

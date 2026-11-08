@@ -142,6 +142,8 @@ def select_balanced(
 
 
 def run(source: Path, cutoff: str, seed: int, output_file: Path, output_root: Path) -> Path:
+    from common.universe_files import validate_universe_export_destination
+    validate_universe_export_destination(source, output_file)
     symbols = read_symbols(source)
     cutoff_ts = pd.Timestamp(cutoff).normalize()
     lookback = cutoff_ts - pd.Timedelta(days=800)
@@ -312,10 +314,10 @@ def run(source: Path, cutoff: str, seed: int, output_file: Path, output_root: Pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sélection Oracle Balanced 400")
-    parser.add_argument("--source", type=Path, default=Path("config/univers/univers_filtred.txt"))
+    parser.add_argument("--source", type=Path, default=Path("config/univers/univers_filtred_tradable.txt"))
     parser.add_argument("--cutoff", default="2025-12-31")
     parser.add_argument("--seed", type=int, default=20251231)
-    parser.add_argument("--output-file", type=Path, default=Path("config/univers/oracle_balanced_400_202512.txt"))
+    parser.add_argument("--output-file", type=Path, default=Path("artifacts/research/universe_exports/balanced_400.txt"))
     parser.add_argument("--output-root", type=Path, default=Path("artifacts/research/universe_selection"))
     args = parser.parse_args()
     run(args.source, args.cutoff, args.seed, args.output_file, args.output_root)

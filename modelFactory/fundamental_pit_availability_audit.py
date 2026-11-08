@@ -406,7 +406,7 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--symbol-source", default="universe-file:univers_filtred_equities.txt"
+        "--symbol-source", default="universe-file:univers_filtred_tradable.txt"
     )
     parser.add_argument(
         "--source-panel", type=Path,

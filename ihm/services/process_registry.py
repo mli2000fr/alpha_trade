@@ -1388,6 +1388,8 @@ def _run_pipeline_workflow(
             )
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
+        from ihm.services.pipeline_runner import path_directional_options
+        options=path_directional_options(options)
         completed_steps = 0
         if options.options_filter_enabled:
             options = _bind_options_workflow_run(options, steps)
@@ -1654,6 +1656,8 @@ def start_pipeline_run(
     workflow_correlation_id: str | None = None,
 ) -> PipelineRunRecord:
     """Démarre un pipeline en arrière-plan et retourne son enregistrement initial."""
+    from ihm.services.pipeline_runner import path_directional_options
+    options=path_directional_options(options)
     from dataclasses import replace as _dc_replace
     from datetime import date as _date
 
@@ -1719,6 +1723,8 @@ def start_pipeline_workflow(
     before_step: Callable[[PipelineStepDefinition, PipelineLaunchOptions, threading.Event], object] | None = None,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
+    from ihm.services.pipeline_runner import path_directional_options
+    options=path_directional_options(options)
     if list_active_pipeline_runs():
         raise RuntimeError("Un run pipeline est déjà actif. Attendez sa fin ou arrêtez-le avant de lancer le workflow complet.")
 

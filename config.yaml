@@ -46,6 +46,14 @@ intraday_backfill:
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
+  min_prediction_coverage_ratio: 0.93  # Inférence du bundle : 30/32 titres suffisent ; cible d'entraînement inchangée.
+  directional:
+    enabled: true  # Défaut de la case bundle parcours ; les anciens batches restent inchangés.
+    oracle_top_n: 20
+    selected_n: 5
+    stop_loss_pct: 0.05
+    horizon_sessions: 10
+    fee_per_leg: 0.0008
   horizon: 10  # Défaut IHM/entraînement : 10, 15 ou 20 séances ; Predict suit le modèle choisi.
   # Entraînement : lightgbm | catboost | auto (comparaison sur validation).
   # Défaut IHM seulement ; un batch déjà entraîné conserve son contrat archivé.
@@ -496,7 +504,7 @@ risk_management:
   # Concentration : maximum de nouvelles entrées sur un même titre,
   # dans une fenêtre glissante exprimée en jours calendaires.
   concentration_max_trades_per_symbol: 10
-  concentration_window_calendar_days: 180
+  concentration_window_calendar_days: 90
   # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
   # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
   #   1.0  = comportement inchangé (rollback).
@@ -588,11 +596,11 @@ risk_management:
 # Si `custom_universe_file` pointe vers un fichier existant, le Stock Screener
 # (étape 3) utilisera les symboles de ce fichier plutôt que de requêter
 # stock_metadata. Le fichier doit contenir des symboles séparés par des virgules.
-# Exemple : "config/univers/univers_filtred_equities.txt"
+# Exemple : "config/univers/univers_filtred_tradable.txt"
 # Laissez vide ou commenté pour utiliser l'univers tradable standard.
 # ---------------------------------------------------------------------------
 screener:
-  custom_universe_file: "config/univers/univers_filtred_equities.txt"
+  custom_universe_file: "config/univers/univers_filtred_tradable.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -736,9 +744,9 @@ batch_diagnostics:
   backtest_horizon:
 
   # Garde-fou « breadth » : part minimale de l'univers de référence
-  # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
-  # prédictions ML live. 75% × 400 = 300 symboles (borne basse du backtest
-  # validé : 311-391). En dessous → prédictions live BLOQUÉES.
+  # (config/univers/univers_filtred_tradable.txt) requise pour générer les
+  # prédictions ML live. Le seuil s’applique au périmètre de référence courant.
+  # En dessous → prédictions live BLOQUÉES.
   ml_min_universe_pct: 75
 
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──

@@ -1,6 +1,8 @@
 """Isolated 31-day FR warmup collection and ESMA reserve audit; no SQL/serving."""
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 from collections import Counter
 from datetime import UTC, date, datetime
@@ -19,7 +21,7 @@ from service.fr.prediction_contract_16a import ROOT, scoped_path
 def reserve_audit(root: Path = ROOT) -> dict:
     cfg = load_section("fr_security_master_sync", root / "batch_fr.yaml")
     path = scoped_path(cfg["baseline_history"], root)
-    raw = path.read_bytes()
+    raw = firds_storage.read_bytes(path)
     history = json.loads(raw)
     gaps = history.get("missing_delta_days", [])
     return {"market_code": "FR_EQ", "base_path": str(path),
@@ -58,7 +60,7 @@ def run(output: Path, end: date, *, resume=False, max_symbols=None) -> dict:
               "sql_writes": False, "serving_enabled": False, "orders_allowed": False}
     try:
         if resume and (output / "progress.json").exists():
-            previous = json.loads((output / "progress.json").read_text(encoding="utf-8"))
+            previous = json.loads(firds_storage.read_text(output / "progress.json", encoding="utf-8"))
             if previous.get("end_date") != str(end):
                 raise ValueError("Resume end date changed")
         report["esma_reserves"] = reserve_audit()

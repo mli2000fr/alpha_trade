@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import subprocess
@@ -9,7 +10,7 @@ import threading
 import time
 import uuid
 from dataclasses import replace
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -34,6 +35,7 @@ from ihm.services.db import validate_db_connection_config
 from ihm.services.screener_recommendations import build_screener_artifact_summary, get_screener_artifacts_dir
 
 RunStatus = Literal["starting", "running", "completed", "failed", "timeout", "stopped"]
+LOGGER = logging.getLogger(__name__)
 TAIL_MAX_LINES = 400
 RUNS_DIR = PROJECT_ROOT / "artifacts" / "ihm_backtesting_runs"
 HISTORY_INDEX_PATH = RUNS_DIR / "history_index.json"
@@ -70,6 +72,9 @@ class BacktestingRunRecord:
     screener_artifacts_dir: str | None = None
     screener_artifact_summary: dict[str, object] | None = None
     isolation_mode: str = 'EXCLUSIVE_LEGACY'
+    pid: int | None = None
+    process_started_at: str | None = None
+    log_capture: str = 'pipes'
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -80,14 +85,16 @@ class _ManagedRun:
     record: BacktestingRunRecord
     process: subprocess.Popen[str]
     events: queue.Queue[tuple[str, str]]
-    stdout_thread: threading.Thread
-    stderr_thread: threading.Thread
+    stdout_thread: threading.Thread | None
+    stderr_thread: threading.Thread | None
     started_perf: float
     timed_out: bool = False
     stdout_tail: list[str] | None = None
     stderr_tail: list[str] | None = None
     # Sprint S2 / A-014 — verrou pipeline associé au run, libéré à la fin.
     pipeline_lock: object | None = None
+    update_lock: object = field(default_factory=threading.RLock)
+    log_offsets: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.stdout_tail is None:
@@ -122,7 +129,12 @@ def _read_history_index() -> dict[str, dict[str, object]]:
 
 def _write_history_index(payload: dict[str, dict[str, object]]) -> None:
     _ensure_storage()
-    HISTORY_INDEX_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = HISTORY_INDEX_PATH.with_name(f'.history-{uuid.uuid4().hex}.tmp')
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(HISTORY_INDEX_PATH)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _persist_record(record: BacktestingRunRecord) -> None:
@@ -152,12 +164,27 @@ def _kill_process_tree(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
     if os.name == "nt":
-        subprocess.run(
+        result = subprocess.run(
             ["taskkill", "/PID", str(process.pid), "/T", "/F"],
             capture_output=True,
             text=True,
             check=False,
         )
+        if result.returncode != 0 and process.poll() is None:
+            # A just-created Windows child may not yet be visible to taskkill.
+            # Its Popen handle is already valid. Terminate observed descendants
+            # first, then use that handle rather than pretending the stop worked.
+            import psutil
+
+            try:
+                for child in psutil.Process(process.pid).children(recursive=True):
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+            except psutil.NoSuchProcess:
+                pass
+            process.kill()
     else:
         process.kill()
 
@@ -223,6 +250,113 @@ def _find_active_backtesting_lock(run_id: str | None = None) -> dict[str, object
             continue
         return payload
     return None
+
+
+def read_backtesting_progress(record: dict[str, object]) -> dict[str, object]:
+    """Small run-local progress only; no database or global artifact scan."""
+    raw = str(record.get('stdout_path') or '')
+    folder = Path(raw).parent if raw else _find_backtesting_run_dir(
+        str(record.get('run_id') or ''), str(record.get('run_kind') or 'run'))
+    if folder is None:
+        return {}
+    path = folder / 'artifacts' / 'progress.json'
+    try:
+        if path.stat().st_size > 1_000_000:
+            return {}
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_process_alive(record: dict[str, object]) -> bool | None:
+    """None means unverified: never infer a stopped process from access denial."""
+    import psutil
+
+    pid = record.get('pid')
+    if pid:
+        try:
+            process = psutil.Process(int(pid))
+            expected = _parse_iso_datetime(record.get('process_started_at'))
+            if expected and abs(process.create_time() - expected.timestamp()) > 1:
+                return False  # PID was reused.
+            return process.is_running()
+        except psutil.NoSuchProcess:
+            return False
+        except (psutil.AccessDenied, ValueError, OSError):
+            return None
+    # Legacy records have no PID. Search only Python commands for this exact
+    # run's path, not another backtest or the Streamlit parent.
+    uncertain = False
+    try:
+        inspectors = {os.getpid(), *(parent.pid for parent in psutil.Process().parents())}
+    except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
+        return None
+    for process in psutil.process_iter(['name', 'cmdline']):
+        if process.pid in inspectors:
+            continue
+        name = str(process.info.get('name') or '').lower()
+        if 'python' not in name:
+            continue
+        command = process.info.get('cmdline')
+        if command is None:
+            uncertain = True
+        elif ('-m' in command and any(token.startswith('backtesting') for token in command)
+              and any(str(record['run_id']) in token for token in command)):
+            return True
+    return None if uncertain else False
+
+
+def _reconcile_history_record(record: dict[str, object]) -> dict[str, object]:
+    """Repair stale active history only with a terminal receipt AND dead child."""
+    if record.get('status') not in ('starting', 'running'):
+        return record
+    run_id = str(record['run_id'])
+    if run_id in _ACTIVE_RUNS or _find_active_backtesting_lock(run_id) is not None:
+        return record
+    progress = read_backtesting_progress(record)
+    outcome = str(progress.get('status') or '')
+    terminal = {'FAILED': 'failed', 'FAILED_ISOLATION': 'failed',
+                'INCOMPLETE_COVERAGE': 'completed', 'COMPLETED_EXPLORATORY': 'completed',
+                'COMPLETED': 'completed'}
+    if outcome not in terminal or _record_process_alive(record) is not False:
+        return record
+    folder = Path(str(record['stdout_path'])).parent
+    # Isolation finalization is later than the simulation receipt.
+    try:
+        isolation = json.loads((folder / 'isolation.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        isolation = {}
+    if isolation.get('status') == 'RUNNING':
+        return record
+    if isolation.get('status') == 'FAILED':
+        terminal[outcome] = 'failed'
+    with _REGISTRY_LOCK:
+        latest = _read_history_index()
+        current = latest.get(run_id, record)
+        if current.get('status') not in ('starting', 'running'):
+            return current
+        error = str(progress.get('error') or '')
+        diagnostic = ('[suivi récupéré depuis artifacts/progress.json ; logs originaux indisponibles] '
+                      + str(progress.get('error_type') or outcome) + ': ' + error + '\n')
+        if error and not _read_text_tail(Path(str(current['stderr_path'])), 1):
+            _append_to_log(str(current['stderr_path']), diagnostic)
+            _append_to_log(str(current['combined_path']), '[stderr] ' + diagnostic)
+        proof = folder / 'status_recovery.json'
+        if not proof.exists():
+            with proof.open('x', encoding='utf-8') as stream:
+                json.dump(dict(previous_record=current, progress=progress,
+                    recovered_at=datetime.now().isoformat(),
+                    basis='Terminal run receipt, no live matching process or lock; exit code unknown'),
+                    stream, ensure_ascii=False, indent=2)
+        updated = {**current, 'status': terminal[outcome], 'is_active': False,
+            'finished_at': datetime.fromtimestamp((folder/'artifacts/progress.json').stat().st_mtime).isoformat(),
+            'duration_seconds': progress.get('elapsed_seconds', current.get('duration_seconds', 0)),
+            'status_recovered_from': 'artifacts/progress.json', 'error': error,
+            'stderr_lines': max(int(current.get('stderr_lines') or 0), 1 if error else 0)}
+        latest[run_id] = updated
+        _write_history_index(latest)
+        return updated
 
 
 def _build_recovered_snapshot_from_lock(payload: dict[str, object]) -> dict[str, object]:
@@ -311,10 +445,10 @@ def _drain_events(managed: _ManagedRun) -> bool:
         drained = True
         if stream_name == "stdout":
             stdout_chunk.append(line)
-            _append_tail(managed.stdout_tail or [], line)
+            _append_tail(managed.stdout_tail, line)
         else:
             stderr_chunk.append(line)
-            _append_tail(managed.stderr_tail or [], line)
+            _append_tail(managed.stderr_tail, line)
 
     if stdout_chunk:
         _append_to_log(managed.record.stdout_path, "".join(stdout_chunk))
@@ -329,7 +463,49 @@ def _drain_events(managed: _ManagedRun) -> bool:
     return drained
 
 
+def _sync_native_logs(managed: _ManagedRun) -> None:
+    """The child owns its log handles; capture survives a page/app restart.
+
+    The combined log groups lines in observation order, not exact inter-stream
+    emission order. Individual stdout/stderr files remain the original evidence.
+    """
+    for stream in ('stdout', 'stderr'):
+        path = Path(getattr(managed.record, stream + '_path'))
+        try:
+            with path.open('rb') as source:
+                offset = managed.log_offsets.get(stream, 0)
+                source.seek(offset)
+                lines = []
+                for _ in range(2000):
+                    position = source.tell()
+                    raw = source.readline()
+                    if not raw:
+                        break
+                    if not raw.endswith(b'\n') and managed.process.poll() is None:
+                        source.seek(position)
+                        break
+                    lines.append(raw.decode('utf-8', errors='replace'))
+                managed.log_offsets[stream] = source.tell()
+        except OSError:
+            continue
+        if lines:
+            tail = managed.stdout_tail if stream == 'stdout' else managed.stderr_tail
+            for line in lines:
+                _append_tail(tail, line)
+            _append_to_log(managed.record.combined_path, ''.join(f'[{stream}] {line}' for line in lines))
+            key = stream + '_lines'
+            managed.record = _with_updates(managed.record, **{key: getattr(managed.record, key) + len(lines)})
+
+
 def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
+    # UI polling and the autonomous monitor may observe completion together.
+    with managed.update_lock:
+        return _finalize_locked(managed)
+
+
+def _finalize_locked(managed: _ManagedRun) -> BacktestingRunRecord:
+    if managed.record.finished_at is not None:
+        return managed.record
     elapsed = round(time.perf_counter() - managed.started_perf, 2)
     returncode = managed.process.poll()
 
@@ -338,21 +514,35 @@ def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
         managed.timed_out = True
         timeout_message = "\nTimeout d'exécution dépassé.\n"
         _append_to_log(managed.record.stderr_path, timeout_message)
-        _append_to_log(managed.record.combined_path, f"[stderr] {timeout_message}")
-        _append_tail(managed.stderr_tail or [], timeout_message)
-        managed.record = _with_updates(managed.record, stderr_lines=managed.record.stderr_lines + 1)
+        if managed.record.log_capture != 'files':
+            _append_to_log(managed.record.combined_path, f"[stderr] {timeout_message}")
+            _append_tail(managed.stderr_tail, timeout_message)
+            managed.record = _with_updates(managed.record, stderr_lines=managed.record.stderr_lines + 1)
         returncode = -2
 
-    _drain_events(managed)
+    if managed.record.log_capture == 'files':
+        _sync_native_logs(managed)
+    else:
+        _drain_events(managed)
     returncode = managed.process.poll() if returncode is None else returncode
 
     if returncode is None:
         managed.record = _with_updates(managed.record, status="running", duration_seconds=elapsed)
         return managed.record
 
-    managed.stdout_thread.join(timeout=0.2)
-    managed.stderr_thread.join(timeout=0.2)
-    _drain_events(managed)
+    for thread in (managed.stdout_thread, managed.stderr_thread):
+        if thread is not None:
+            thread.join(timeout=0.2)
+    if managed.record.log_capture == 'files':
+        # Drain all remaining batches before publishing final line counts.
+        while any(Path(getattr(managed.record, name + '_path')).stat().st_size > managed.log_offsets.get(name, 0)
+                  for name in ('stdout', 'stderr') if Path(getattr(managed.record, name + '_path')).exists()):
+            before = dict(managed.log_offsets)
+            _sync_native_logs(managed)
+            if before == managed.log_offsets:
+                break
+    else:
+        _drain_events(managed)
 
     if managed.timed_out:
         status: RunStatus = "timeout"
@@ -386,6 +576,23 @@ def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
         finally:
             managed.pipeline_lock = None
     return managed.record
+
+
+def _monitor_run(managed: _ManagedRun) -> None:
+    """Persist progress, timeout and final status even without an open page."""
+    import logging
+
+    while True:
+        try:
+            with managed.update_lock:
+                record = _finalize_locked(managed)
+                if record.finished_at is None:
+                    _persist_record(record)
+            if record.finished_at is not None:
+                return
+        except Exception:
+            logging.getLogger(__name__).exception('Suivi du backtest %s', managed.record.run_id)
+        time.sleep(1)
 
 
 def _tail_text(lines: list[str]) -> str:
@@ -535,18 +742,17 @@ def start_backtesting_run(
         ) from exc
 
     try:
-        process = subprocess.Popen(
-            command,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            creationflags=_creation_flags(),
-        )
+        # Native handles persist output without a Streamlit session or reader
+        # thread. The child retains its handles when the parent closes them.
+        with stdout_path.open('ab', buffering=0) as stdout_file, stderr_path.open('ab', buffering=0) as stderr_file:
+            process = subprocess.Popen(
+                command,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                creationflags=_creation_flags(),
+            )
         backtest_lock = _rebind_lock_pid(backtest_lock, pid=process.pid)
     except Exception:
         try:
@@ -558,10 +764,8 @@ def start_backtesting_run(
         raise
 
     events: queue.Queue[tuple[str, str]] = queue.Queue()
-    stdout_thread = threading.Thread(target=_reader, args=(process.stdout, "stdout", events), daemon=True)
-    stderr_thread = threading.Thread(target=_reader, args=(process.stderr, "stderr", events), daemon=True)
-    stdout_thread.start()
-    stderr_thread.start()
+    from ihm.services.pipeline_lock import _get_process_started_at
+    process_started = _get_process_started_at(process.pid)
 
     record = BacktestingRunRecord(
         run_id=run_id,
@@ -577,13 +781,16 @@ def start_backtesting_run(
         timeout_seconds=timeout_seconds,
         screener_artifacts_dir=screener_artifacts_dir,
         isolation_mode='READ_ONLY_ISOLATED' if isolated else 'EXCLUSIVE_MUTATING_OR_UNQUALIFIED',
+        pid=process.pid,
+        process_started_at=process_started.isoformat() if process_started else None,
+        log_capture='files',
     )
     managed = _ManagedRun(
         record=record,
         process=process,
         events=events,
-        stdout_thread=stdout_thread,
-        stderr_thread=stderr_thread,
+        stdout_thread=None,
+        stderr_thread=None,
         started_perf=time.perf_counter(),
         pipeline_lock=backtest_lock,
     )
@@ -591,6 +798,8 @@ def start_backtesting_run(
     with _REGISTRY_LOCK:
         _ACTIVE_RUNS[run_id] = managed
     _persist_record(record)
+    threading.Thread(target=_monitor_run, args=(managed,), daemon=True,
+                     name=f'backtest-monitor-{run_id}').start()
     return record
 
 
@@ -598,7 +807,7 @@ def list_active_backtesting_runs() -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     for run_id in list(_ACTIVE_RUNS.keys()):
         snapshot = poll_backtesting_run(run_id)
-        if snapshot is not None:
+        if snapshot is not None and snapshot.get('is_active'):
             snapshots.append(snapshot)
 
     from ihm.services.pipeline_lock import list_active_locks
@@ -620,20 +829,22 @@ def poll_backtesting_run(run_id: str) -> dict[str, object] | None:
         if active_lock is not None:
             return _build_recovered_snapshot_from_lock(active_lock)
         history = _read_history_index()
-        return history.get(run_id)
+        record = history.get(run_id)
+        return _reconcile_history_record(record) if record else None
 
-    record = _finalize_if_needed(managed)
-    snapshot = {
-        **record.to_state(),
-        "stdout_tail": _tail_text(managed.stdout_tail or []),
-        "stderr_tail": _tail_text(managed.stderr_tail or []),
-        "is_active": record.status in {"starting", "running"},
-    }
-    if record.status not in {"starting", "running"}:
-        with _REGISTRY_LOCK:
-            _ACTIVE_RUNS.pop(run_id, None)
-    else:
-        _persist_record(record)
+    with managed.update_lock:
+        record = _finalize_locked(managed)
+        snapshot = {
+            **record.to_state(),
+            "stdout_tail": _tail_text(managed.stdout_tail or []),
+            "stderr_tail": _tail_text(managed.stderr_tail or []),
+            "is_active": record.status in {"starting", "running"},
+        }
+        if record.status not in {"starting", "running"}:
+            with _REGISTRY_LOCK:
+                _ACTIVE_RUNS.pop(run_id, None)
+        else:
+            _persist_record(record)
     return snapshot
 
 
@@ -661,26 +872,31 @@ def stop_backtesting_run(run_id: str) -> bool:
                 )
             )
 
-        history = _read_history_index()
-        record = history.get(run_id)
-        if record is not None:
-            record["status"] = "stopped"
-            record["stop_requested"] = True
-            record["returncode"] = -3
-            record["finished_at"] = datetime.now().isoformat(timespec="seconds")
-            record["duration_seconds"] = _compute_elapsed_seconds(record.get("executed_at"))
-            history[run_id] = record
-            _write_history_index(history)
+        with _REGISTRY_LOCK:
+            history = _read_history_index()
+            record = history.get(run_id)
+            if record is not None:
+                record["status"] = "stopped"
+                record["stop_requested"] = True
+                record["returncode"] = -3
+                record["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                record["duration_seconds"] = _compute_elapsed_seconds(record.get("executed_at"))
+                history[run_id] = record
+                _write_history_index(history)
         return True
 
-    managed.record = _with_updates(managed.record, stop_requested=True)
-    _kill_process_tree(managed.process)
-    _persist_record(_with_updates(managed.record, status="stopped"))
+    with managed.update_lock:
+        if managed.record.finished_at is not None:
+            return False
+        managed.record = _with_updates(managed.record, stop_requested=True)
+        _kill_process_tree(managed.process)
+        managed.process.wait(timeout=5)
+        _finalize_locked(managed)
     return True
 
 
 def load_backtesting_history() -> list[dict[str, object]]:
-    history = list(_read_history_index().values())
+    history = [_reconcile_history_record(record) for record in _read_history_index().values()]
     history.sort(key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""), reverse=True)
     return history
 
@@ -721,7 +937,20 @@ def read_backtesting_logs(
     *,
     tail_lines: int | None = None,
 ) -> str:
-    path = _resolve_backtesting_log_path(get_backtesting_run_record(run_id), stream)
+    record = get_backtesting_run_record(run_id)
+    # If the app restarted, the child continues writing its native files even
+    # without a monitor to merge them. Keep both streams visible immediately.
+    if stream == 'all' and record and record.get('log_capture') == 'files' and run_id not in _ACTIVE_RUNS:
+        chunks = []
+        for name in ('stdout', 'stderr'):
+            source = _resolve_backtesting_log_path(record, name)
+            if source is not None and source.is_file():
+                value = (_read_text_tail(source, tail_lines) if tail_lines and tail_lines > 0
+                         else source.read_text(encoding='utf-8', errors='replace'))
+                if value:
+                    chunks.append(f'[{name} — flux regroupé]\n{value}')
+        return '\n'.join(chunks)
+    path = _resolve_backtesting_log_path(record, stream)
     if path is None or not path.exists():
         return ""
     if isinstance(tail_lines, int) and tail_lines > 0:
@@ -798,15 +1027,24 @@ def delete_backtesting_runs_except(
             errors.append(f"{run_id}: {exc}")
 
     # 3. Réécrire l'index sans les runs supprimés
-    remaining = {rid: rec for rid, rec in index.items() if rid not in set(deleted)}
-    if set(remaining) != set(index):
-        _write_history_index(remaining)
+    if deleted:
+        with _REGISTRY_LOCK:
+            latest = _read_history_index()
+            _write_history_index({rid: rec for rid, rec in latest.items() if rid not in set(deleted)})
 
     return {"deleted": deleted, "kept": kept, "errors": errors}
 
 
 def _purge_run_artifacts(run_id: str, record: dict[str, object]) -> None:
     """Supprime le répertoire du run (et ses logs/artefacts) si présent."""
+    managed = _ACTIVE_RUNS.get(run_id)
+    if managed is not None:
+        with managed.update_lock:
+            if managed.process.poll() is None:
+                raise RuntimeError('Arrêt du processus non confirmé ; run conservé')
+            _finalize_locked(managed)
+    elif _find_active_backtesting_lock(run_id) is not None:
+        raise RuntimeError('Processus encore actif ; run conservé')
     removed_dir = False
     run_kind = str(record.get("run_kind") or "")
     run_dir = _find_backtesting_run_dir(run_id, run_kind=run_kind or None)
@@ -898,8 +1136,9 @@ def delete_backtesting_runs(
             errors.append(f"{run_id}: {exc}")
 
     if deleted:
-        remaining = {rid: rec for rid, rec in index.items() if rid not in set(deleted)}
-        _write_history_index(remaining)
+        with _REGISTRY_LOCK:
+            latest = _read_history_index()
+            _write_history_index({rid: rec for rid, rec in latest.items() if rid not in set(deleted)})
 
     return {"deleted": deleted, "kept": kept, "errors": errors}
 

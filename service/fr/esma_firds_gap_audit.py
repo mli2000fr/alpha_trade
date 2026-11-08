@@ -1,6 +1,8 @@
 """Audit hors ligne de l'index FIRDS téléchargé (preuves, pas promotion)."""
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import json
 import re
@@ -9,14 +11,14 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from common.market_calendar import get_market_calendar
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 
 PART = re.compile(r"^(?:FULINS_E|DLTINS)_\d{8}_(\d+)of(\d+)\.zip$")
 
 
 def audit(root: Path, *, end: date) -> dict:
-    index = json.loads((root / "index.json").read_text(encoding="utf-8"))
-    state = json.loads((root / "download_state.json").read_text(encoding="utf-8"))
+    index = json.loads(firds_storage.read_text(root / "index.json", encoding="utf-8"))
+    state = json.loads(firds_storage.read_text(root / "download_state.json", encoding="utf-8"))
     records = [row for row in index["files"] if date.fromisoformat(row["date"]) <= end]
     state_by_name = {row["file"]: row for row in state["files"]}
     missing_files = []
@@ -24,7 +26,7 @@ def audit(root: Path, *, end: date) -> dict:
     groups = defaultdict(list)
     for row in records:
         groups[(row["date"], row["type"])].append(row)
-        if not (root / row["date"][:4] / row["file"]).is_file():
+        if not firds_storage.is_file(root / row["date"][:4] / row["file"]):
             missing_files.append(row["file"])
         if row["file"] not in state_by_name or not state_by_name[row["file"]].get("sha256"):
             missing_evidence.append(row["file"])
@@ -56,7 +58,10 @@ def audit(root: Path, *, end: date) -> dict:
     gap_sessions = sorted(set(without_delta) & expected_sessions)
     return {
         "start": initial.isoformat(), "end": end.isoformat(),
-        "files_indexed": len(records), "files_missing_on_disk": missing_files,
+        "files_indexed": len(records), "files_missing_from_storage": missing_files,
+        "source_storage": "alpha_trade_fr" if firds_storage.repository(root) is not None else "files",
+        # Compatibility alias for frozen historical consumers; means selected storage now.
+        "files_missing_on_disk": missing_files,
         "files_without_download_evidence": missing_evidence,
         "incomplete_part_groups": incomplete_parts,
         "delta_publication_gaps": without_delta,

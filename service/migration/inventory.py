@@ -110,27 +110,28 @@ def installed_versions(root):
 
 
 def running_processes(root,*,allow_ui=True):
+    """Only actual batch workers block restore; UI and schedulers may stay open."""
     import psutil
     root=Path(root).resolve();result=[]
     for process in psutil.process_iter(['pid','name','cmdline','exe']):
         if process.pid==os.getpid():continue
         try:
-            cmd=process.info['cmdline'] or [];joined=' '.join(cmd)
+            cmd=process.info['cmdline'] or []
+            joined=' '.join(cmd).replace('\\','/')
             exe=process.info['exe'] or ''
-            belongs=(bool(exe) and Path(exe).resolve().is_relative_to(root)) or str(root).casefold() in joined.casefold()
+            belongs=(bool(exe) and Path(exe).resolve().is_relative_to(root)) or str(root).replace('\\','/').casefold() in joined.casefold()
             if not belongs:
                 try:belongs=Path(process.cwd()).resolve().is_relative_to(root)
                 except (psutil.AccessDenied,psutil.NoSuchProcess):pass
             if not belongs:continue
-            # An IDE/shell can be open in the workspace. Only workers and known
-            # database clients can mutate the snapshot; inaccessible workers block.
             name=(process.info['name'] or '').lower()
-            if not any(n in name for n in ('python','mysql','mariadb')):continue
-            if process.ppid()==os.getpid() and (any(x in name for x in ('mysql','mariadb')) or cmd[1:4]==['-m','pip','freeze']):continue
-            if allow_ui and ('streamlit' in joined or 'ihm/app.py' in joined.replace('\\','/')):continue
-            result.append(dict(pid=process.pid,name=process.info['name']))
+            if 'python' not in name:continue
+            arguments=[str(arg).casefold() for arg in cmd[1:]]
+            batch_worker=('--batch' in arguments or '--batch-name' in arguments or
+                          any('collect_yahoo_analyst_snapshots.py' in arg for arg in arguments))
+            if batch_worker:result.append(dict(pid=process.pid,name=process.info['name']))
         except psutil.NoSuchProcess:continue
-        except psutil.AccessDenied:result.append(dict(pid=process.pid,name='processus inaccessible'))
+        except (psutil.AccessDenied,OSError):continue  # A vanished/inaccessible process is not a confirmed batch.
     return result
 
 
@@ -138,9 +139,9 @@ def enabled_tasks(root):
     """Read-only scheduler inventory. No disabling tasks or watcher services."""
     if os.name!='nt':return []
     script=r'''$ErrorActionPreference='Stop'; $r=$env:ALPHA_MIGRATION_SCAN_ROOT; $out=@();
-    Get-ScheduledTask | ForEach-Object { $t=$_; if($t.Settings.Enabled) {
+    Get-ScheduledTask | ForEach-Object { $t=$_; if($t.State -eq 'Running') {
       foreach($a in $t.Actions) { if(($a.Execute -like "$r*") -or ($a.Arguments -like "*$r*") -or ($a.WorkingDirectory -like "$r*")) {
-        $out+=@{task=($t.TaskPath+$t.TaskName);name='tâche planifiée active'};break
+        $out+=@{task=($t.TaskPath+$t.TaskName);name='batch planifié en cours'};break
       }}
     }}; ConvertTo-Json -InputObject $out -Compress'''
     p=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',script],capture_output=True,timeout=30,

@@ -118,6 +118,9 @@ def llm_options(options, steps, *, config=None):
     A fresh scheduled selection requires step 10; never adopt a latest LLM run.
     The batch's shared collection universe remains authoritative.
     """
+    from ihm.services.pipeline_runner import path_directional_options
+    normalized=path_directional_options(options)
+    if normalized is not options:return normalized
     numbers = {step.num for step in steps}
     if not numbers.intersection({'10', '11', '12'}):
         return options
@@ -140,6 +143,9 @@ def llm_options(options, steps, *, config=None):
 
 
 def options_filter_options(options, steps, *, config=None):
+    from ihm.services.pipeline_runner import path_directional_options
+    normalized=path_directional_options(options)
+    if normalized is not options:return normalized
     if not {s.num for s in steps}.intersection({'10', '11', '12'}):
         return options
     from service.options_directional.config import load_options_filter_config

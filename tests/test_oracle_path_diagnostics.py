@@ -2,7 +2,6 @@
 from contextlib import contextmanager
 from hashlib import sha256
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -118,6 +117,179 @@ def test_top_ten_titles_not_ten_percent_and_amplitude_already_percent():
     assert rows[0]['Sélection']=='10 premiers titres'
     assert rows[0]['Précision véritable TOP20 %']==.8
     assert rows[0]['Amplitude maximale moyenne (%)']==32.5
+
+
+def bundle_manifest(root):
+    from modelFactory.oracle_path.directional import INPUTS
+    records=[]
+    for symbol,side in [('A','long'),('A','short'),('B','long')]:
+        path=root/'directional'/symbol/f'{side}-2024.joblib'
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(b'hashed fixture; never deserialize')
+        records.append(dict(symbol=symbol,side=side,year=2024,file=str(path.relative_to(root)),
+            sha256=sha256(path.read_bytes()).hexdigest(),fit_start='2020-01-02',fit_end='2022-12-01',
+            fit_available_max='2022-12-20',calibration_start='2023-01-03',calibration_end='2023-12-01',
+            available='2023-12-20',fit_rows=800,calibration_rows=200))
+    return dict(status='COMPLETED',features=INPUTS,models=records,
+        skipped=[dict(symbol='B',side='short',year=2024,reason='INSUFFICIENT_HISTORY_OR_CLASSES')],
+        contract=dict(enabled=True,oracle_top_n=20,selected_n=5,stop_loss_pct=.05,horizon_sessions=10,fee_per_leg=.0008),
+        serving_side='long')
+
+
+def test_directional_summary_counts_annual_models_and_separates_missing_titles(tmp_path):
+    manifest=bundle_manifest(tmp_path)
+    result=diag.directional_summary({'universe':['A','B']},manifest)
+    assert result['models']==3 and result['long_models']==2 and result['short_models']==1
+    assert result['coverage']==[{'Année d’utilisation':2024,'Titres de l’univers':2,
+        'Titres avec LONG':2,'Titres avec SHORT':1,'Sans modèle LONG':0,'Sans modèle SHORT':1}]
+    assert result['details'][0]['Fin calibration']=='2023-12-01'
+    assert result['omissions'][0]['Symbole']=='B'
+    assert 'insuffisants' in result['omissions'][0]['Motif']
+    assert 'auc' not in result
+
+
+def test_directional_files_and_manifest_invalidate_diagnostic_cache(artifacts):
+    parent,root=artifacts
+    manifest=bundle_manifest(root)
+    (root/'directional/manifest.json').write_text(json.dumps(manifest))
+    before=diag.artifact_signature('batch',parent)
+    (root/manifest['models'][0]['file']).write_bytes(b'changed model fixture')
+    assert before!=diag.artifact_signature('batch',parent)
+
+
+def test_directional_section_displays_models_even_without_legacy_training_rows(tmp_path):
+    from streamlit.testing.v1 import AppTest
+    summary=diag.directional_summary({'universe':['A','B']},bundle_manifest(tmp_path))
+    app=AppTest.from_string('''import streamlit as st
+from ihm.components.oracle_path_diagnostics import render_directional
+render_directional({'batch_id':'fixture','directional':st.session_state['summary']})
+''')
+    app.session_state['summary']=summary
+    app.run(timeout=30)
+    assert not app.exception
+    assert {item.label:item.value for item in app.metric}=={
+        'Modèles LONG entraînés':'2','Modèles SHORT entraînés':'1'}
+    assert any('Sans modèle SHORT' in frame.value.columns for frame in app.dataframe)
+    app.selectbox(key='diag_path_side_fixture').select('SHORT').run(timeout=30)
+    assert not app.exception
+    detail=next(frame.value for frame in app.dataframe if 'Fichier' in frame.value.columns)
+    assert detail.Direction.tolist()==['SHORT']
+
+
+def add_bundle_to_fixture(root):
+    manifest=bundle_manifest(root)
+    protocol=json.loads((root/'protocol.json').read_text())
+    protocol.pop('fingerprint')
+    protocol.update(mode='oracle_path_h10',target='oracle_path_extreme10',horizon=10,
+        training_config={'oracle_path_directional_enabled':True},directional_contract=manifest['contract'])
+    protocol['fingerprint']=sha256(json.dumps(protocol,sort_keys=True,default=str).encode()).hexdigest()
+    (root/'protocol.json').write_text(json.dumps(protocol))
+    profile=json.loads((root/'feature_profile.json').read_text())
+    profile.update(mode=protocol['mode'],target=protocol['target'])
+    (root/'feature_profile.json').write_text(json.dumps(profile))
+    manifest['oracle_protocol_sha256']=sha256((root/'protocol.json').read_bytes()).hexdigest()
+    (root/'directional/manifest.json').write_text(json.dumps(manifest))
+    report=json.loads((root/'report.json').read_text())
+    report.update(mode=protocol['mode'],horizon=10,directional_models=3,directional_skipped=1,
+        directional_manifest_sha256=sha256((root/'directional/manifest.json').read_bytes()).hexdigest())
+    (root/'report.json').write_text(json.dumps(report))
+    for folder in (root/'folds').iterdir():
+        frame=pd.read_parquet(folder/'oof.parquet').rename(columns={diag.TARGET:protocol['target']})
+        frame.to_parquet(folder/'oof.parquet')
+        done=json.loads((folder/'done.json').read_text())
+        done['files']['oof.parquet']=sha256((folder/'oof.parquet').read_bytes()).hexdigest()
+        (folder/'done.json').write_text(json.dumps(done))
+
+
+def test_bundle_loader_exposes_verified_per_symbol_models_without_sql(artifacts):
+    parent,root=artifacts
+    add_bundle_to_fixture(root)
+    view=diag.load_path_artifacts('batch',parent)
+    assert view['ready'] and not view['errors']
+    assert view['directional']['models']==3
+    assert view['directional']['coverage'][0]['Sans modèle SHORT']==1
+
+
+def test_bundle_periods_show_explicit_empty_per_symbol_rows(artifacts):
+    parent,root=artifacts;add_bundle_to_fixture(root)
+    view=diag.load_path_artifacts('batch',parent)
+    result=diag.read_sql_periods(Engine(rows=0),'batch',view)
+    assert not result['errors']
+    rows=diag.period_rows(view,result)
+    long=next(r for r in rows if r['Source']=='Per-symbol LONG — SQL')
+    assert long['Période']=='—' and long['Lignes']==0
+    assert 'aucune prédiction LONG' in long['Détail']
+    assert any(r['Source']=='Per-symbol SHORT — SQL' for r in rows)
+
+
+def test_bundle_periods_read_actual_directional_scores_and_manifest(artifacts):
+    parent,root=artifacts;add_bundle_to_fixture(root)
+    view=diag.load_path_artifacts('batch',parent)
+    class BundleEngine(Engine):
+        def execute(self,statement,params):
+            sql=str(statement)
+            if 'oracle_path_directional_predictions' in sql:
+                assert params['manifest']==view['directional']['manifest_sha256']
+                assert '_probability IS NOT NULL' in sql
+                return SimpleNamespace(mappings=lambda:SimpleNamespace(one=lambda:dict(
+                    min_date='2024-01-02',max_date='2024-02-01',nb_dates=20,nb_symbols=2,
+                    n_rows=40,matching_manifest_rows=40)))
+            if 'oracle_path_prediction_lineage l' in sql:return SimpleNamespace(scalar_one=lambda:4)
+            return super().execute(statement,params)
+    result=diag.read_sql_periods(BundleEngine(),'batch',view)
+    assert not result['errors']
+    rows=diag.period_rows(view,result)
+    long=next(r for r in rows if r['Source']=='Per-symbol LONG — SQL')
+    assert long['Période']=='2024-01-02 → 2024-02-01' and long['Lignes']==40
+
+
+def test_metric_rows_and_streamlit_keep_calibration_distinct_from_test(tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from modelFactory.oracle_path.directional_metrics import classification_metrics
+    record=dict(symbol='A',year=2024,side='long',metrics={
+        'calibration':classification_metrics([0,1],[.1,.9]),
+        'oos':classification_metrics([0,1],[.8,.2]),
+        'oos_nonoverlap':classification_metrics([1],[.2]),
+        'train':classification_metrics([0,1],[.1,.9])})
+    rows=diag.directional_metric_rows([record])
+    assert next(r for r in rows if r['Échantillon']=='oos')['AUC']==0
+    app=AppTest.from_string('''import streamlit as st
+from ihm.components.oracle_path_diagnostics import render_directional_metrics
+render_directional_metrics({'batch_id':'fixture'},{'metrics_rows':st.session_state['rows']})
+''')
+    app.session_state['rows']=rows;app.run(timeout=30)
+    assert not app.exception
+    assert any(m.label=='AUC médiane par titre' and m.value=='0.000' for m in app.metric)
+    assert not app.warning
+    app.selectbox(key='diag_path_metric_stage_fixture').select('calibration').run(timeout=30)
+    assert not app.exception and any('pas un test indépendant' in w.value for w in app.warning)
+
+
+def test_per_symbol_oos_file_periods_are_distinct_from_oracle_and_sql(tmp_path):
+    file=tmp_path/'oos.parquet'
+    pd.DataFrame(dict(date=pd.to_datetime(['2024-01-02','2024-01-03']),
+        symbol=['A','A'],side=['long','short'])).to_parquet(file)
+    info=[dict(path=file.name,rows=2,sha256=sha256(file.read_bytes()).hexdigest())]
+    coverage=diag.directional_oos_coverage(tmp_path,info)
+    assert coverage['long']['n_rows']==1 and coverage['short']['n_rows']==1
+    rows=diag.period_rows({'directional':{'oos_coverage':coverage}},
+        {'directional':{'long':{'n_rows':0},'short':{'n_rows':0}}})
+    test=next(r for r in rows if r['Source']=='Tests OOS per-symbol LONG')
+    assert test['Période']=='2024-01-02 → 2024-01-02' and test['Séances']==1
+    file.write_bytes(b'corrupt')
+    with pytest.raises(ValueError,match='corrompues'):diag.directional_oos_coverage(tmp_path,info)
+
+
+@pytest.mark.parametrize('corrupt',['count','weights'])
+def test_invalid_directional_artifacts_never_show_qualified_metrics(artifacts,corrupt):
+    parent,root=artifacts
+    add_bundle_to_fixture(root)
+    if corrupt=='count':
+        report=json.loads((root/'report.json').read_text());report['directional_models']=999
+        (root/'report.json').write_text(json.dumps(report))
+    else:(root/'directional/A/long-2024.joblib').write_bytes(b'corrupt')
+    view=diag.load_path_artifacts('batch',parent)
+    assert not view['ready'] and view['errors']
 
 
 def test_empty_sql_aggregate_does_not_create_nat_period(artifacts):

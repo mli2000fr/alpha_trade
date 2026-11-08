@@ -7,6 +7,8 @@ autorisation économique ou de production.
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import gzip
 import hashlib
@@ -25,7 +27,7 @@ ScopeState = Literal["ELIGIBLE", "INELIGIBLE", "UNKNOWN", "PROHIBITED"]
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with firds_storage.open_binary(path) as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()

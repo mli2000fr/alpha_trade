@@ -45,6 +45,11 @@ def load_contract(artifacts_dir, batch_id):
         raise ValueError('Profil Oracle parcours invalide')
     if profile.get('generator_options') != protocol.get('generator_options'):
         raise ValueError('Générateur du profil différent du training')
+    from .directional import enabled, load_manifest
+    if enabled(protocol):
+        load_manifest(root)
+        if report.get('directional_manifest_sha256')!=digest(root/'directional/manifest.json'):
+            raise ValueError('Manifeste directionnel différent du rapport publié')
     requested=protocol.get('training_backend')
     if requested is not None:
         if (requested not in CHOICES or protocol.get('backend')!=DECLARATIONS[requested]
@@ -150,6 +155,35 @@ def build_inference_features(engine, universe, start, end, options):
     return restore_ranks(pd.concat(parts, ignore_index=True), options)
 
 
+def prediction_coverage_ratio():
+    """Operational inference guard, independent of frozen training-label coverage."""
+    from common.config_loader import load_config
+    value=(load_config().get('oracle_path') or {}).get('min_prediction_coverage_ratio',.95)
+    if type(value) not in (int,float) or not np.isfinite(value) or not 0 < value <= 1:
+        raise ValueError('oracle_path.min_prediction_coverage_ratio doit appartenir à ]0,1].')
+    return float(value)
+
+
+def validate_prediction_coverage(features, universe, days, protocol, ratio):
+    minimum=max(int(protocol.get('min_daily_universe',20)),
+        int(protocol.get('directional_contract',{}).get('oracle_top_n',20)),
+        int(np.ceil(len(universe)*ratio)))
+    failures=[]
+    for day in days:
+        observed=set(features.loc[features.date.eq(pd.Timestamp(day)),'symbol'])
+        missing=sorted(set(universe)-observed)
+        if missing:
+            LOGGER.warning('Couverture Oracle %s : %d/%d (%.2f%%), minimum %d (%.2f%%), absents=%s',
+                str(pd.Timestamp(day).date()),len(observed),len(universe),100*len(observed)/len(universe),
+                minimum,100*ratio,','.join(missing))
+        if len(observed)<minimum:
+            failures.append(f'{pd.Timestamp(day).date()} : {len(observed)}/{len(universe)}, '
+                f'minimum {minimum} ({ratio:.2%}), absents={",".join(missing)}')
+    if failures:
+        raise ValueError('Bundle parcours : couverture Oracle insuffisante avant le classement TOP20 ; '
+            +' ; '.join(failures)+' ; seuil dans config.yaml/oracle_path.min_prediction_coverage_ratio')
+
+
 _LINEAGE_DDL = """CREATE TABLE IF NOT EXISTS alpha_trade.oracle_path_prediction_lineage (
  prediction_date DATE NOT NULL, symbol VARCHAR(20) NOT NULL, batch_id VARCHAR(255) NOT NULL,
  fold_start DATE NOT NULL, model_available_date DATE NOT NULL,
@@ -193,6 +227,7 @@ def write_path_predictions(engine, scores, batch_id, *, horizon=HORIZON):
 
 def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artifacts_dir='artifacts/models',
                                 symbols=None, horizon=None, persist_chunk_dates=20):
+    from .directional import enabled
     root, protocol, profile, folds = load_contract(artifacts_dir, batch_id)
     trained_horizon = protocol['horizon']
     if horizon is not None and validate_horizon(horizon) != trained_horizon:
@@ -205,6 +240,8 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
     wanted = set(universe if symbols is None else [str(s).strip().upper() for s in symbols])
     if not wanted or wanted-set(universe):
         raise ValueError(f'Univers vide ou hors contrat du modèle : {sorted(wanted-set(universe))[:20]}')
+    if enabled(protocol) and wanted!=set(universe):
+        raise ValueError('Bundle parcours : utiliser l’univers entier du modèle avant le TOP Oracle, sans reclasser un sous-ensemble')
     from modelFactory.oracle.build_labels import nyse_sessions
     sessions = nyse_sessions(pd.Timestamp(start_date).date(), pd.Timestamp(end_date).date())
     if not len(sessions):
@@ -213,6 +250,7 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
     schedule = {day: select_fold(day, folds) for day in sessions}
     columns = profile['feature_columns']
     profile_hash = digest(root/'feature_profile.json')
+    coverage_ratio=prediction_coverage_ratio() if enabled(protocol) else None
     cache, persisted, observed = {}, 0, set()
     for offset in range(0, len(sessions), max(1, int(persist_chunk_dates))):
         chunk = sessions[offset:offset+max(1, int(persist_chunk_dates))]
@@ -224,6 +262,8 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
         features = features.loc[features.symbol.isin(wanted) & features.date.isin(chunk)].copy()
         if features.duplicated(['date', 'symbol']).any() or set(chunk)-set(features.date):
             raise ValueError('Séance absente ou clés de features dupliquées')
+        if enabled(protocol):
+            validate_prediction_coverage(features,universe,chunk,protocol,coverage_ratio)
         features[columns] = features[columns].replace([np.inf, -np.inf], np.nan).astype(np.float32)
         if features[columns].isna().all(axis=1).any():
             raise ValueError('Ligne de features entièrement manquante')
@@ -248,9 +288,15 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
             scores.loc[group.index, 'model_available_date'] = str(available.date())
             scores.loc[group.index, 'model_sha256'] = folds[name]['model_sha256']
         scores['feature_profile_sha256'] = profile_hash
+        if enabled(protocol):
+            from .directional import infer, write_predictions
+            directional_scores=infer(engine,root,scores)
+            write_predictions(engine,directional_scores,batch_id)
         persisted += write_path_predictions(engine, scores, batch_id, horizon=trained_horizon)
         observed.update(scores.symbol)
         LOGGER.info('Oracle parcours batch=%s dates=%s/%s persistés=%s', batch_id,
             min(offset+len(chunk), len(sessions)), len(sessions), persisted)
     return dict(status='completed', batch_id=batch_id, n_rows=persisted, n_dates=len(sessions),
-        n_symbols=len(observed), target=protocol['target'], horizon=trained_horizon, directional=False)
+        n_symbols=len(observed), target=protocol['target'], horizon=trained_horizon, directional=enabled(protocol),
+        min_prediction_coverage_ratio=coverage_ratio,
+        selection_policy='ORACLE_TOP_N_THEN_LONG_TOP_N' if enabled(protocol) else 'AMPLITUDE_ONLY')

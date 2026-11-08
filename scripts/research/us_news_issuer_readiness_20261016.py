@@ -12,6 +12,7 @@ import re
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, text
+from common.universe_files import load_universe_file_symbols
 
 from scripts.research import us_news_event_qualification as evidence
 from scripts.research.us_news_financing_feasibility import read_pack
@@ -64,6 +65,8 @@ def planned_request(items,reviews,diagnostics,now):
     selected=sorted({known[r['evidence_key']]['symbol'] for r in reviews
         if r.get('identity_verified') is True
         and gates[r['evidence_key']]['status'].startswith('REVIEW_REQUIRED_')})
+    universe_file='config/univers/univers_filtred_tradable.txt'
+    canonical_symbols=load_universe_file_symbols('universe-file:'+universe_file)
     last_closed_day=now.astimezone(ZoneInfo('America/New_York')).date()-timedelta(days=1)
     return dict(status='PREPARED_NOT_EXECUTED',symbols=selected,symbol_count=len(selected),
         selection='Previously reviewed issuer/subject match plus no explicit venue collision; not an investment selection',
@@ -72,7 +75,10 @@ def planned_request(items,reviews,diagnostics,now):
         deferred_dates=['2026-10-16'],
         deferred_reason='Existing backfill CLI only accepts end dates strictly before current New York date; do not bypass current-session guard',
         expected_symbol_slices=len(selected),
-        proposed_universe_file='config/univers/research_news_issuer_20261016.txt',
+        proposed_universe_file=universe_file,
+        proposed_universe_symbol_count=len(canonical_symbols),
+        requires_scope_review_before_collection=set(selected)!=set(canonical_symbols),
+        scope_review_reason='The canonical universe must not silently replace the identity-reviewed subset',
         universe_file_created=False,requires_explicit_collection_go=True,
         creates_historical_news_availability=False,
         historical_bars_download_would_not_prove_historical_bar_availability=True,
@@ -131,6 +137,8 @@ def run(pack,output):
         '--alpaca-feed','sip','--account-id','default','--interval','5m','--chunk-days','7',
         '--start-date',request['start_date'],'--end-date',request['end_date'],
         '--symbol-source','universe-file:'+request['proposed_universe_file'],'--plan-only']
+    if request['requires_scope_review_before_collection']:
+        command=None  # Do not offer a broader download than the reviewed scope.
     result=dict(status='RESEARCH_IDENTITY_GUARD_AND_TARGETED_REQUEST_PREPARED',created_at_utc=now,
         source_publication_cutoff_unchanged=protocol['cutoff_utc'],selected_pairs=len(items),
         anchor_counts=dict(Counter(r['status'] for r in diagnostics)),

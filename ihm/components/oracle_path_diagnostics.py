@@ -26,6 +26,99 @@ def _number(value,fmt='.3f'):
     except (ValueError,TypeError):return '—'
 
 
+def render_directional_metrics(view,summary):
+    rows=summary.get('metrics_rows') or []
+    st.markdown('**Mesures par titre — LONG / SHORT**')
+    if not rows:
+        progress=summary.get('diagnostic_progress') or {}
+        if progress.get('status')=='RUNNING':
+            done,total=progress.get('completed',0),progress.get('total',0)
+            st.info(f'Diagnostics en cours : {done:,}/{total:,} titres. Aucun réentraînement ni backtest de portefeuille.')
+        else:st.info('Diagnostics non calculés pour cet ancien batch. Les prochains entraînements les enregistrent automatiquement.')
+        return
+    frame=pd.DataFrame(rows)
+    labels={'oos':'Test hors échantillon','oos_nonoverlap':'Test hors échantillon — fenêtres sans chevauchement',
+        'calibration':'Calibration — non indépendante','train':'Entraînement — non indépendant'}
+    stage=st.selectbox('Échantillon des métriques per-symbol',list(labels),format_func=labels.get,
+        key=f"diag_path_metric_stage_{view['batch_id']}")
+    available=frame[frame['Échantillon'].eq(stage)&frame.Observations.gt(0)]
+    years=sorted(frame['Année d’utilisation'].unique().tolist(),reverse=True)
+    default=int(available['Année d’utilisation'].max()) if len(available) else years[0]
+    left,right=st.columns(2)
+    year=left.selectbox('Année évaluée',years,index=years.index(default),
+        key=f"diag_path_metric_year_{view['batch_id']}_{stage}")
+    side=right.selectbox('Direction évaluée',['LONG','SHORT'],key=f"diag_path_metric_side_{view['batch_id']}")
+    selected=frame[frame['Échantillon'].eq(stage)&frame['Année d’utilisation'].eq(year)&frame.Direction.eq(side)]
+    usable=selected[selected.Observations.gt(0)]
+    if usable.empty:
+        st.info(f'Aucun résultat arrivé à maturité disponible pour le test {year} dans les données de cet entraînement. '
+            'Un modèle entraîné pour cette année peut exister sans avoir encore été évalué dessus.')
+    else:
+        cols=st.columns(3)
+        cols[0].metric('Titres avec observations évaluées',len(usable))
+        cols[1].metric('AUC médiane par titre',_number(usable.AUC.median()))
+        cols[2].metric('Exactitude médiane — seuil 0,5',_number(usable['Exactitude — seuil 0,5'].median(),'.1%'))
+        st.caption(f"AUC calculable pour {int(usable.AUC.notna().sum()):,}/{len(usable):,} titres évalués ; "
+            'une seule classe ne permet pas de calculer une AUC.')
+        st.dataframe(selected.style.format({'AUC':'{:.3f}','Exactitude — seuil 0,5':'{:.1%}',
+            'Exactitude équilibrée':'{:.1%}','Précision des scores ≥ 0,5':'{:.1%}',
+            'Fréquence de gains dans les labels':'{:.1%}','Brier':'{:.3f}'},na_rep='—'),
+            use_container_width=True,hide_index=True)
+    if stage in ('calibration','train'):
+        st.warning('Ce jeu sert à entraîner ou calibrer le modèle : ses résultats ne sont pas un test indépendant.')
+    contract=summary.get('contract') or {}
+    horizon=int(contract.get('horizon_sessions',10));sl=float(contract.get('stop_loss_pct',.05))
+    st.caption('AUC : qualité du classement des labels gagnants/perdants ; « — » si une seule classe ou aucune observation. '
+        f'Exactitude : classe prédite avec un seuil de 0,5. Labels : résultat net H{horizon}, SL{100*sl:g} %, '
+        f'sans TP/trailing, sortie open{horizon+1}. '
+        'Ces mesures ne sont pas le taux de trades gagnants du portefeuille Winner. '
+        f'Les fenêtres quotidiennes se chevauchent ; la variante sans chevauchement utilise une phase fixe de {horizon+1} séances.')
+    if summary.get('benchmark_reconstructed_from_SQL'):
+        st.caption('Diagnostic reconstitué depuis les barres archivées et les poids d’origine ; '
+            'le benchmark SPY a été relu en SQL et figé pour ce diagnostic. Son état exact au jour du training ancien n’était pas archivé.')
+    st.download_button('Télécharger les métriques per-symbol (CSV)',frame.to_csv(index=False).encode('utf-8-sig'),
+        file_name=f"{view['batch_id']}_per_symbol_metrics.csv",mime='text/csv',key=f"diag_path_metrics_csv_{view['batch_id']}")
+
+
+def render_directional(view):
+    summary=view.get('directional')
+    if not summary:return
+    st.subheader('🧩 Modèles per-symbol LONG / SHORT')
+    st.success(f"{summary['models']:,} modèles annuels par titre présents et vérifiés, "
+        f"pour un univers de {summary['universe_size']:,} titres.")
+    left,right=st.columns(2)
+    left.metric('Modèles LONG entraînés',f"{summary['long_models']:,}")
+    right.metric('Modèles SHORT entraînés',f"{summary['short_models']:,}")
+    st.caption(f"Chaque modèle est propre à un titre, une direction et une année d’utilisation ; "
+        f"{summary['features']} variables. Le compteur de batch « 1 terminé » désigne le bundle complet, pas un seul titre.")
+    st.dataframe(pd.DataFrame(summary['coverage']),use_container_width=True,hide_index=True)
+    st.caption('Une année sans modèle signifie que les critères minimums de données ne sont pas satisfaits. '
+        'Les absences ne sont pas remplacées par un score neutre. Les modèles SHORT sont archivés ; '
+        'la sélection du bundle utilise uniquement LONG.')
+    with st.expander('Détails des modèles par titre et périodes d’entraînement',expanded=False):
+        details=pd.DataFrame(summary['details'])
+        if not details.empty:
+            years=sorted(details['Année d’utilisation'].unique().tolist(),reverse=True)
+            year=st.selectbox('Année des modèles per-symbol',years,key=f"diag_path_year_{view['batch_id']}")
+            side=st.selectbox('Branche per-symbol',['LONG','SHORT'],key=f"diag_path_side_{view['batch_id']}")
+            chosen=details[(details['Année d’utilisation']==year)&(details['Direction']==side)]
+            st.dataframe(chosen,use_container_width=True,hide_index=True)
+            st.download_button('Télécharger le détail des modèles per-symbol (CSV)',
+                details.to_csv(index=False).encode('utf-8-sig'),file_name=f"{view['batch_id']}_per_symbol.csv",
+                mime='text/csv',key=f"diag_path_models_csv_{view['batch_id']}")
+        else:st.info('Aucun modèle per-symbol entraîné dans le manifeste.')
+    with st.expander('Modèles non entraînés : années, titres et motifs',expanded=False):
+        omissions=pd.DataFrame(summary['omissions'])
+        if not omissions.empty:
+            counts=omissions.groupby(['Année d’utilisation','Direction','Motif']).size().reset_index(name='Nombre')
+            st.dataframe(counts,use_container_width=True,hide_index=True)
+            st.download_button('Télécharger les modèles non entraînés (CSV)',
+                omissions.to_csv(index=False).encode('utf-8-sig'),file_name=f"{view['batch_id']}_per_symbol_absents.csv",
+                mime='text/csv',key=f"diag_path_skipped_csv_{view['batch_id']}")
+        else:st.info('Aucun modèle ignoré.')
+    render_directional_metrics(view,summary)
+
+
 def render_model(view,sql):
     horizon=(view.get('protocol') or {}).get('horizon',20)
     st.subheader(f'🔮 Oracle Extreme parcours H{horizon} — amplitude')
@@ -44,6 +137,11 @@ def render_model(view,sql):
         render_periods(view,sql)
         return
     report=view['report'];overall=report['overall'];protocol=view['protocol']
+    if protocol.get('training_config',{}).get('oracle_path_directional_enabled'):
+        contract=protocol['directional_contract']
+        st.info(f'Bundle parcours : {report.get("directional_models",0)} modèles annuels LONG/SHORT par titre. '
+                f'Sélection enregistrée : TOP{contract["oracle_top_n"]} Oracle → TOP{contract["selected_n"]} LONG → risque → Winner. '
+                'Les métriques ci-dessous concernent l’amplitude Oracle, pas la rentabilité des branches par titre.')
     columns=st.columns(4)
     columns[0].metric('AUC amplitude — OOF',_number(overall.get('auc')))
     columns[1].metric('Précision 10 premiers titres',_number(overall.get('precision_top_10_titles'),'.1%'))
@@ -83,5 +181,6 @@ def render_model(view,sql):
             'Ces tests OOF n’évaluent pas automatiquement les nouvelles prédictions SQL.')
     with st.expander('Profil de features',expanded=False):
         st.dataframe(pd.DataFrame({'Feature':view['profile']['feature_columns']}),use_container_width=True,hide_index=True)
+    render_directional(view)
     st.caption('Les labels future_return / oracle_extreme10 de la table de scores restent NULL pour ce modèle. '
         'Les anciens diagnostics D1/D10 et le constructeur de labels terminaux ne sont pas appliqués à sa cible parcours.')

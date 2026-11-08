@@ -5,6 +5,8 @@ ni l'identité historique, ni la possibilité d'exécuter un ordre sur cette bar
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import gzip
 import hashlib
@@ -12,7 +14,7 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 
 
 def classify(day: str, markets: list[dict], missing_days: set[str],
@@ -68,9 +70,9 @@ def audit(history: dict, root: Path, *, start: str, end: str) -> dict:
         code = symbol["symbol"]
         key = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
         metadata_path = root / "symbols" / f"{key}.json"
-        if not metadata_path.is_file():
+        if not firds_storage.is_file(metadata_path):
             raise FileNotFoundError(f"archive symbole absente : {code}")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = json.loads(firds_storage.read_text(metadata_path, encoding="utf-8"))
         if metadata["symbol"] != code or metadata["status"] != "COMPLETED":
             raise ValueError(f"archive symbole incomplète : {code}")
         bars_path = root / metadata["payloads"]["eod"]["file"]
@@ -121,7 +123,7 @@ def main() -> None:
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    history = json.loads(args.history.read_text(encoding="utf-8"))
+    history = json.loads(firds_storage.read_text(args.history, encoding="utf-8"))
     report = audit(history, args.root, start=args.start_date, end=args.end_date)
     _atomic_json(args.output, report)
     print(json.dumps({key: report[key] for key in

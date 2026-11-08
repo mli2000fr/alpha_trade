@@ -21,10 +21,19 @@ def test_new_or_old_default_session_uses_tradable(monkeypatch, initial):
     monkeypatch.setattr(pipeline.st, "session_state", state)
     pipeline._prime_ml_predict_symbol_source()
     assert state["pipeline_ml_predict_symbol_source"] == SOURCE
-    # Once migrated, a deliberate manual choice must survive a rerender.
-    state["pipeline_ml_predict_symbol_source"] = OLD_SOURCE
+    # Valid manual choices survive a rerender; retired files are migrated.
+    state["pipeline_ml_predict_symbol_source"] = "stock-bars-daily"
     pipeline._prime_ml_predict_symbol_source()
-    assert state["pipeline_ml_predict_symbol_source"] == OLD_SOURCE
+    assert state["pipeline_ml_predict_symbol_source"] == "stock-bars-daily"
+
+
+@pytest.mark.parametrize('step', ['train', 'predict'])
+def test_retired_selection_is_migrated_even_after_default_was_primed(monkeypatch, step):
+    state = {f'pipeline_ml_{step}_symbol_source': OLD_SOURCE,
+             getattr(pipeline, f'ML_{step.upper()}_SOURCE_DEFAULT_VERSION_KEY'): True}
+    monkeypatch.setattr(pipeline.st, 'session_state', state)
+    getattr(pipeline, f'_prime_ml_{step}_symbol_source')()
+    assert state[f'pipeline_ml_{step}_symbol_source'] == SOURCE
 
 
 def test_existing_custom_choice_is_not_replaced(monkeypatch):

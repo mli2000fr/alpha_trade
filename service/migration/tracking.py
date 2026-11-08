@@ -19,7 +19,12 @@ LABELS={
     'WAITING_FOR_TARGET_STOP':'Attente de la fermeture des services du PC cible',
     'STAGING':'Extraction et préparation des fichiers', 'BACKUP_EXISTING':'Sauvegarde de l’existant sur le PC cible',
     'DATABASE_REPLACEMENT':'Restauration des bases', 'DATABASE_VALIDATION':'Validation des bases restaurées',
+    'DATABASE_READY':'Bases validées — installation des fichiers à suivre',
     'FILE_REPLACEMENT':'Installation des fichiers et modèles', 'USER_ENVIRONMENT':'Restauration des variables utilisateur',
+    'FILE_ROLLBACK':'Retour des fichiers à leur état précédent (bases conservées)',
+    'FILES_PENDING':'Bases validées — installation des fichiers à reprendre',
+    'FILES_ROLLBACK_INCOMPLETE':'Bases conservées — retour des fichiers incomplet',
+    'DATABASE_CHECK_FAILED':'Vérification des bases échouée — reprise des fichiers interdite',
     'FINALIZING':'Vérifications finales', 'RESTORED_PAUSED':'Données restaurées, services laissés arrêtés',
     'BUILDING_PYTHON':'Création de l’environnement Python et installation des dépendances',
     'ROLLBACK':'Retour à l’état précédant la restauration', 'FAILED_ROLLED_BACK':'Échec — état précédent rétabli',
@@ -34,11 +39,17 @@ EXPORT={'ONLINE_BACKUP':(0,5),'QUIESCENCE':(0,5),'DATABASE_INVENTORY':(5,10),
         'DATABASE_RECHECK':(85,90),'VERIFYING':(90,99)}
 RESTORE={'VERIFYING':(0,12),'RESTORE_PREFLIGHT':(12,18),'STAGING':(18,35),
          'BACKUP_EXISTING':(35,55),'DATABASE_REPLACEMENT':(55,78),'DATABASE_VALIDATION':(78,85),
-         'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
+         'DATABASE_READY':(85,85),'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
          'RESTORED_PAUSED':(97,97),'BUILDING_PYTHON':(97,99)}
+RESTORE_FILES={'DATABASE_VALIDATION':(0,10),'STAGING':(10,55),'FILE_REPLACEMENT':(55,90),
+               'USER_ENVIRONMENT':(90,94),'FINALIZING':(94,97),
+               'RESTORED_PAUSED':(97,97),'BUILDING_PYTHON':(97,99)}
+FILES_ONLY={'VERIFYING':(0,30),'RESTORE_PREFLIGHT':(30,32),'STAGING':(32,75),
+            'FILE_REPLACEMENT':(75,97),'FINALIZING':(97,99)}
 NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes','filesystem_errno','filesystem_winerror'}
 TEXT={'database','package','item','unit','error_code','failed_path','file_error','failure_reason','cause_type','recovery_source'}
-TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE','RECOVERED_PAUSED'}
+TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
+          'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED','RECOVERED_PAUSED'}
 
 
 class Progress:
@@ -65,6 +76,8 @@ class Progress:
         self.state['status']=phase if phase in TERMINAL else 'RUNNING'
         if fields.get('warning') is True:self.state['warning']=True
         ranges=(EXPORT if self.operation=='export' else RESTORE if self.operation=='restore' else
+            FILES_ONLY if self.operation in ('plan_files_only','restore_files_only') else
+            RESTORE_FILES if self.operation=='restore_files' else
             {'INVENTORY_SCAN':(0,70),'ENVIRONMENT_INVENTORY':(70,99)} if self.operation=='inventory' else
             {'VERIFYING':(0,99),'RESTORE_PREFLIGHT':(90,99)})
         low,high=ranges.get(phase,(self.state['percent'],self.state['percent']))

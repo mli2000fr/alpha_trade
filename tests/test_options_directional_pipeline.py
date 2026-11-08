@@ -77,7 +77,8 @@ def test_no_live_or_implicit_llm_combination(kwargs):
 def test_checkbox_default_and_manual_opt_out(monkeypatch):
     from ihm.pages import _execution_center as page
     config = OptionsFilterConfig(enabled=True)
-    for state, expected in [({},True), ({'pipeline_options_filter_enabled':False},False)]:
+    for state, expected in [({},False), ({'pipeline_options_filter_enabled':False},False),
+                            ({'pipeline_options_filter_enabled':True},True)]:
         monkeypatch.setattr(page.st,'session_state',state)
         monkeypatch.setattr(page.st,'checkbox',lambda label,**kwargs:kwargs['value'])
         monkeypatch.setattr(page.st,'caption',lambda *a:None)

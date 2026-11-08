@@ -5,13 +5,15 @@ l'ordre de rejeu. Le fichier source reste intact et son SHA-256 est conservé.
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import hashlib
 import json
 from datetime import date
 from pathlib import Path
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 from service.fr.esma_firds_history import _observed_interval, _trading_episodes, apply_event
 
 DERIVED_KEYS = {"asof_from", "asof_to", "archive_date", "source_file"}
@@ -57,7 +59,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.input.resolve() == args.output.resolve():
         parser.error("le rapport original doit rester intact")
-    raw = args.input.read_bytes()
+    raw = firds_storage.read_bytes(args.input)
     result = reframe(json.loads(raw), hashlib.sha256(raw).hexdigest())
     _atomic_json(args.output, result)
     print(json.dumps({"versions": result["counts"]["version_records"],

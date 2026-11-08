@@ -1,0 +1,7 @@
+# Connexion locale indépendante des API GPT/DeepSeek et du pipeline de trading.
+base_url: http://127.0.0.1:1234/v1
+model: qwen3.5-9b
+timeout_seconds: 120
+max_output_tokens: 512
+temperature: 0.0
+api_key_env: LM_STUDIO_API_KEY  # Facultatif si l'authentification LM Studio est désactivée.

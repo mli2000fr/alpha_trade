@@ -53,6 +53,27 @@ def test_command_parser_receives_exact_risk_and_winner_edits():
     assert json.loads(args.policy_overrides_json)==dict(stop_loss_pct=.07,horizon_sessions=15)
 
 
+@pytest.mark.parametrize('value',[0.,-1.,2.01,float('nan'),float('inf'),True])
+def test_replay_gross_cap_rejects_invalid_values(value):
+    with pytest.raises(ValueError):risk_overrides(dict(max_gross_exposure=value))
+
+
+@pytest.mark.usefixtures('isolated_winner_config')
+def test_replay_gross_edit_reaches_native_sizing_without_raising_account_leverage():
+    from tests.test_winner_intraday import fixture
+    from backtesting.simulator import BacktestEngine
+    results=[]
+    for account_leverage,risk_cap in [(2.,1.),(2.,2.),(1.,2.)]:
+        cfg,args,_=fixture(symbols=('AAA','BBB','CCC'),leverage=account_leverage,initial_position_fraction=1.)
+        cfg.winner_daily_entry_enabled=True
+        cfg.risk_config=apply_risk_settings(cfg.risk_config,dict(max_gross_exposure=risk_cap))
+        args['open_df']=args['open_df']*0+100.
+        results.append(BacktestEngine(cfg).run(**args))
+    assert results[0].intraday_equity_curve.gross.iloc[0]<=4000.
+    assert 4000.<results[1].intraday_equity_curve.gross.iloc[0]<=8000.
+    assert results[2].intraday_equity_curve.gross.iloc[0]<=4000.
+
+
 @pytest.mark.usefixtures('isolated_winner_config')
 def test_risk_budget_override_changes_real_replay_quantities():
     from tests.test_winner_intraday import fixture
@@ -78,40 +99,82 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     monkeypatch.setattr('ihm.components.winner_backtest.load_winner_pyramiding_config',lambda:base_policy)
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:base_risk)
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=False))
-    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10},None,
+    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10,'universe':['AAA']},None,
         {'2021-07-02':{'metrics':dict(fold_start='2021-07-02',train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
     def app():
         from dataclasses import asdict
         import streamlit as st
         from ihm.components.winner_backtest import render_winner_backtest
         st.session_state['settings_result']=asdict(render_winner_backtest())
-    at=AppTest.from_function(app).run(timeout=30)
+    at=AppTest.from_function(app)
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Explicit legacy reference profile.
+    # Existing open browser sessions receive the requested defaults once.
+    for key,value in dict(bt_wp_confirmation=2,bt_wp_delay=930,bt_wr_weight=25.,bt_wr_gross=1.,
+                          bt_wr_close=True,bt_winner_factors=True).items():at.session_state[key]=value
+    at.run(timeout=30)
     assert not at.exception
     initial=at.session_state['settings_result']
     assert initial['winner_research_assumptions'] is True
-    assert initial['winner_risk_overrides']=={} and initial['winner_policy_overrides']=={}
-    assert initial['winner_ignore_missing_intraday'] is True
+    assert initial['winner_risk_overrides']==dict(max_position_weight=.2,force_close_on_breaker=False,max_gross_exposure=2.)
+    assert at.number_input(key='bt_wr_gross').value==2.
+    assert initial['winner_policy_overrides']==dict(confirmation_bars=0,entry_valid_sessions=1)
+    assert initial['winner_daily_entry_enabled'] is True
+    assert at.number_input(key='bt_wp_confirmation').disabled
+    assert at.number_input(key='bt_wp_validity').disabled
+    assert initial['winner_drawdown_controller_enabled'] is False
+    assert initial['winner_factor_model'] is False
+    assert at.checkbox(key='bt_wr_close').disabled
+    assert at.number_input(key='bt_wp_delay').value==0
+    assert initial['winner_ignore_missing_intraday'] is False
+    assert at.checkbox(key='bt_winner_ignore_missing_intraday').disabled
     assert initial['winner_factor_market_cap_check'] is False
+    at.number_input(key='bt_wr_gross').set_value(1.5).run(timeout=30)
+    assert at.session_state['settings_result']['winner_risk_overrides']['max_gross_exposure']==1.5
     at.checkbox(key='bt_winner_ignore_missing_intraday').uncheck().run(timeout=30)
     assert at.session_state['settings_result']['winner_ignore_missing_intraday'] is False
+    at.checkbox(key='bt_winner_factors').check().run(timeout=30)
     at.checkbox(key='bt_winner_factor_cap').check().run(timeout=30)
     assert at.session_state['settings_result']['winner_factor_market_cap_check'] is True
     at.number_input(key='bt_wr_budget').set_value(2.)
+    at.number_input(key='bt_wr_gross').set_value(2.)
     at.number_input(key='bt_wr_minimum').set_value(35.)
     at.number_input(key='bt_wp_sl').set_value(7.)
     at.number_input(key='bt_wp_horizon').set_value(15).run(timeout=30)
     assert not at.exception
     edited=at.session_state['settings_result']
     assert edited['winner_risk_overrides']['risk_per_trade_pct']==.02
+    assert edited['winner_risk_overrides']['max_gross_exposure']==2.
+    from ihm.services.backtesting_runner import BacktestRunOptions,build_backtesting_command
+    from backtesting.winner_campaign_replay import build_parser
+    command=build_backtesting_command('run',BacktestRunOptions(**edited))
+    assert json.loads(build_parser().parse_args(command[4:]).risk_overrides_json)['max_gross_exposure']==2.
+    assert base_risk.max_gross_exposure==1.
     assert edited['winner_risk_overrides']['min_position_notional']==35.
-    assert edited['winner_policy_overrides']==dict(stop_loss_pct=.07,horizon_sessions=15)
+    assert edited['winner_policy_overrides']==dict(stop_loss_pct=.07,horizon_sessions=15,confirmation_bars=0,entry_valid_sessions=1)
     assert base_policy.stop_loss_pct==.05 and base_risk.risk_per_trade_pct==.01
-    at.button(key='bt_winner_reset_settings').click().run(timeout=30)
+    at.selectbox(key='bt_winner_profile_choice').select('production').run(timeout=30)
     assert not at.exception
     assert at.session_state['settings_result']['winner_risk_overrides']=={}
+    assert at.number_input(key='bt_wr_gross').value==base_risk.max_gross_exposure
     assert at.session_state['settings_result']['winner_policy_overrides']=={}
     assert at.session_state['settings_result']['winner_ignore_missing_intraday'] is True
     assert at.session_state['settings_result']['winner_factor_market_cap_check'] is False
+    assert at.session_state['settings_result']['winner_drawdown_controller_enabled'] is True
+    assert at.session_state['settings_result']['winner_daily_entry_enabled'] is False
+    assert not at.number_input(key='bt_wp_confirmation').disabled
+    assert at.number_input(key='bt_wp_confirmation').value==base_policy.confirmation_bars
+    at.selectbox(key='bt_winner_profile_choice').select('reference').run(timeout=30)
+    assert not at.exception and at.session_state['settings_result']['winner_drawdown_controller_enabled'] is False
+    assert at.number_input(key='bt_wr_weight').value==20.
+    assert at.number_input(key='bt_wr_gross').value==2.
+    at.checkbox(key='bt_wr_controller_enabled').check().run(timeout=30)
+    assert not at.checkbox(key='bt_wr_close').disabled
+    at.checkbox(key='bt_wr_close').check().run(timeout=30)
+    assert at.session_state['settings_result']['winner_risk_overrides'].get('force_close_on_breaker',True)
+    assert at.session_state['settings_result']['winner_drawdown_controller_enabled'] is True
+    at.checkbox(key='bt_wr_controller_enabled').uncheck().run(timeout=30)
+    assert at.session_state['settings_result']['winner_risk_overrides']['force_close_on_breaker'] is False
+    assert at.checkbox(key='bt_wr_close').disabled
 
 
 def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_path,monkeypatch):
@@ -137,26 +200,30 @@ def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_p
     monkeypatch.setattr('ihm.components.winner_backtest.Path',lambda p:model_root if p=='artifacts/models' else Path(p))
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:RiskConfig(account_equity=kw['equity']))
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=False))
-    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10},None,
+    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10,'universe':['AAA']},None,
         {'2021-07-02':{'metrics':dict(fold_start='2021-07-02',train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
     def app():
         from dataclasses import asdict
         import streamlit as st
         from ihm.components.winner_backtest import render_winner_backtest
         st.session_state['settings_result']=asdict(render_winner_backtest())
-    at=AppTest.from_function(app).run(timeout=30)
+    at=AppTest.from_function(app)
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Test YAML/reference opt-in.
+    at.run(timeout=30)
     assert not at.exception
     panel=next(e for e in at.expander if e.label=='Réglages Winner et limites du replay')
     assert panel.number_input(key='bt_wp_sl').value==8.
     assert panel.number_input(key='bt_wp_tp').value==16.
     assert panel.number_input(key='bt_wp_trailing').value==12.
     assert panel.number_input(key='bt_wp_horizon').value==15
-    assert panel.number_input(key='bt_wp_confirmation').value==3
+    assert panel.number_input(key='bt_wp_confirmation').value==0
     assert panel.number_input(key='bt_wp_validity').value==8
-    assert panel.number_input(key='bt_wp_delay').value==930
+    assert panel.number_input(key='bt_wp_delay').value==0
     assert panel.number_input(key='bt_wp_reserve').value==37.
     assert not any(e.label=='Protections et confirmation Winner' for e in at.expander)
-    assert at.session_state['settings_result']['winner_policy_overrides']=={}
+    assert at.session_state['settings_result']['winner_policy_overrides']==dict(confirmation_bars=0,market_data_delay_seconds=0,entry_valid_sessions=1)
+    at.checkbox(key='bt_winner_daily_entry').uncheck().run(timeout=30)
+    assert at.session_state['settings_result']['winner_daily_entry_enabled'] is False
     for key,value in [('bt_wp_sl',6.),('bt_wp_tp',18.),('bt_wp_trailing',9.),('bt_wp_horizon',10),
                       ('bt_wp_confirmation',0),('bt_wp_validity',12),('bt_wp_delay',1200),
                       ('bt_wp_delayed_buffer',.5),('bt_wp_reserve',40.)]:
@@ -171,7 +238,7 @@ def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_p
         horizon_sessions=10,initial_position_fraction=1.,reinforcement_enabled=False,
         confirmation_bars=0,entry_valid_sessions=12,market_data_delay_seconds=1200,
         delayed_entry_limit_buffer_pct=.005,cost_reserve_bps_per_leg=40.)
-    at.button(key='bt_winner_reset_settings').click().run(timeout=30)
+    at.selectbox(key='bt_winner_profile_choice').select('production').run(timeout=30)
     assert not at.exception and at.session_state['settings_result']['winner_policy_overrides']=={}
     assert at.number_input(key='bt_wp_sl').value==8.
     assert at.number_input(key='bt_wp_horizon').value==15

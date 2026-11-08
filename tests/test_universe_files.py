@@ -6,6 +6,8 @@ import pytest
 
 from common.universe_files import (
     default_universe_file_source,
+    default_universe_file_source_or,
+    is_retired_universe_source,
     list_universe_file_sources,
     load_universe_file_symbols,
     normalize_universe_file_source,
@@ -14,6 +16,7 @@ from common.universe_files import (
     universe_file_source,
     universe_file_source_from_path,
     validate_symbol_source,
+    validate_universe_export_destination,
 )
 
 
@@ -53,6 +56,33 @@ def test_legacy_ticket_source_resolves_first_file(tmp_path: Path) -> None:
 
     assert normalize_universe_file_source("ticket-recherche", tmp_path) == "universe-file:a.txt"
     assert load_universe_file_symbols("ticket-recherche", tmp_path) == ["A"]
+
+
+def test_canonical_default_wins_over_alphabetical_files(tmp_path: Path) -> None:
+    _write(tmp_path/'a.txt', 'WRONG')
+    _write(tmp_path/'univers_filtred_tradable.txt', 'RIGHT')
+    assert default_universe_file_source(tmp_path) == 'universe-file:univers_filtred_tradable.txt'
+    assert default_universe_file_source_or('all', tmp_path) == 'universe-file:univers_filtred_tradable.txt'
+    assert load_universe_file_symbols('ticket-recherche', tmp_path) == ['RIGHT']
+
+
+def test_retired_sources_are_only_ui_migration_hints_not_loader_aliases(tmp_path: Path) -> None:
+    _write(tmp_path/'univers_filtred_tradable.txt', 'RIGHT')
+    assert is_retired_universe_source('universe-file:univers_filtred_equities.txt')
+    assert is_retired_universe_source('universe-file:config/univers/ticket_recherche.txt')
+    assert not is_retired_universe_source('universe-file:config/other/ticket_recherche.txt')
+    with pytest.raises(FileNotFoundError):
+        load_universe_file_symbols('universe-file:univers_filtred_equities.txt', tmp_path)
+
+
+def test_research_export_cannot_overwrite_input_or_shared_universe(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    source=Path('source.txt')
+    with pytest.raises(ValueError):
+        validate_universe_export_destination(source, source)
+    with pytest.raises(ValueError):
+        validate_universe_export_destination(source, Path('config/univers/univers_filtred_tradable.txt'))
+    validate_universe_export_destination(source, Path('artifacts/research/export.txt'))
 
 
 def test_legacy_option_is_replaced_without_removing_native_sources(tmp_path: Path) -> None:

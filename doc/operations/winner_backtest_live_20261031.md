@@ -15,11 +15,68 @@ parcours et replay intraday**. Cette case reprend `winner_pyramiding.enabled`
 au premier affichage. Le formulaire dédié remplace les paramètres du moteur
 daily classique ; les deux moteurs ne mélangent pas leurs protections.
 
-Sélectionner un modèle Oracle parcours terminé H10/H15/H20, les dates, le
-fichier d'univers, le TOP-N (20 par défaut), le capital, le type de compte,
-les positions maximales et l'exposition 1×/2×. Le 2× n'est proposé que pour
+Sélectionner un modèle Oracle parcours terminé H10/H15/H20 et les dates.
+L'univers reprend automatiquement les symboles figés du modèle sélectionné.
+Le TOP Oracle, le capital, le type de compte,
+les positions maximales et l'exposition 1×/2× restent modifiables. Le 2× n'est proposé que pour
 un compte margin et si la configuration de levier l'autorise. Les contraintes
 de risque peuvent encore réduire l'exposition effectivement utilisée.
+
+Depuis le 7 novembre, le formulaire Winner utilise **Q088 — risque réduit + B4/DD15** par défaut,
+à partir du cas archivé
+`artifacts/research/us_winner_risk_tradeoff/20261107-v1/cases/Q088_SIZE125_B4DD15/configuration.json` :
+
+| Paramètre | Défaut Q088 |
+| --- | --- |
+| Sélection | TOP20 % Oracle → TOP10 LONG per-symbol, sans SHORT |
+| Score / AUC LONG | Score strictement > 0,60 ; AUC calibration ≥ 0,60 |
+| Entrée | Ouverture journalière J+1, position complète, sans confirmation ni renforcement |
+| Sortie | SL5 %, sans TP ni trailing ; dix séances de détention puis open11 |
+| Capital / compte / levier | 4 000 $, margin, capacité maximale 2× |
+| Risque par entrée / poids par titre | 1,25 % / 20 % |
+| Positions / montant minimum | 20 / 50 $ |
+| Contrôleur DD/B4 | Actif, DD15 %, perte quotidienne 3 %, liquidation 50 % |
+| Facteurs, corrélation, limites sectorielles, cible de volatilité | Désactivés |
+| Répétition des entrées | Dix par titre sur 90 jours ; trois pertes consécutives → exclusion 90 jours |
+| Coût par achat ou vente / financement | 8 points de base / 6,5 % annuel sur le débit de marge |
+
+Le pourcentage Oracle dépend de l'univers du batch : 358 candidats pour
+1 790 titres ; aucun univers ou modèle n'est remplacé automatiquement.
+Pour reproduire le parcours Q088, choisir un bundle Oracle H10 + per-symbol.
+Un modèle Oracle seul ne contient pas de classement LONG per-symbol.
+Le seuil de couverture Oracle conserve son contrôle existant.
+
+Ces valeurs sont appliquées une fois à l'ouverture du formulaire, y compris
+dans les anciennes sessions. Les modifications suivantes restent conservées.
+La liste **Profil de paramètres du backtest** remplace les trois anciens boutons.
+Q088 est sélectionné par défaut. Chaque choix charge les réglages et affiche
+immédiatement son explication sous la liste :
+
+- **Q088 — risque réduit + B4/DD15** : profil décrit dans le tableau ci-dessus.
+- **Q051 — risque réduit, plafond de risque 1×** : TOP10 % Oracle → TOP5 LONG,
+  score >0,60 et AUC ≥0,60 ; risque1,25 %, poids20 %, plafond de risque1×,
+  sans B4/DD15 ni liquidation globale. Même SL5/open11, entrée directe,
+  capital4 000 $, frais et paramètres communs que Q088. Le compte margin
+  conserve sa capacité2× ; les nouvelles entrées sont bornées par le risque1×.
+  Cas source `Q051_SIZE125_GROSS1`, résultat exploratoire2025 : +31,67 %,
+  DD −18,04 %. Ce profil ne désigne pas le Q051 d'origine à risque2,5 %.
+- **Réglages de production — config.yaml** : recharge les réglages Winner et
+  les limites du preset de capital ; l'entrée journalière est désactivée.
+- **Ancien test de référence** : aucune confirmation/délai, poids20 %, plafond2×,
+  DD/B4 et facteurs désactivés ; les autres protections viennent de la config.
+
+**Réappliquer le profil choisi** permet d'annuler ses ajustements manuels.
+Les ajustements restent conservés lors des rafraîchissements ordinaires.
+Changer de profil conserve le batch et les dates ; les profils Q051/Q088
+réinitialisent leur sélection et leurs paramètres financiers.
+Les réglages de production et les runs déjà lancés ne sont pas modifiés.
+Ce profil exploratoire 2025 avait donné +35,13 % et DD −17,20 %, contre
++58,87 % et DD −40,02 % pour le Q088 d'origine (risque2,5 %, poids40 %, sans B4).
+Le seuil DD15 déclenche une réaction et n'est pas un plafond garanti.
+Le premier chargement des défauts avait repris le Q088 d'origine : le run
+`20261107_222014_0dc532e7` le reproduit exactement. Les défauts et le libellé sont
+corrigés pour désigner explicitement `Q088_SIZE125_B4DD15`. Le run existant
+conserve ses résultats d'origine ; un nouveau run est nécessaire pour la variante.
 La couverture minimale des prédictions reprend le seuil du filtre options (90 %
 actuellement) ; disposer de vingt scores ne suffit pas si le reste de
 l'univers demandé n'est pas suffisamment couvert. La disponibilité SQL de

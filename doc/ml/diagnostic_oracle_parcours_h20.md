@@ -99,3 +99,92 @@ Sources : `ihm/pages/ml_diagnostics.py`,
 `ihm/components/oracle_path_diagnostics.py` et
 `tests/test_oracle_path_diagnostics.py`. Aucun modèle, score, label, réglage de
 risque, batch ou table n'a été modifié par cette correction d'affichage.
+
+## Bundle parcours + per-symbol — 6 novembre 2026
+
+La page affiche désormais un bloc **Modèles per-symbol LONG / SHORT** pour
+les bundles compatibles. Ces branches sont stockées sous
+`oracle_path/directional/manifest.json` et ne doivent pas être cherchées
+uniquement dans le registre SQL des anciens modèles per-symbol.
+
+Après validation du contrat et des SHA-256 de tous les poids, le bloc expose :
+
+- nombres de modèles LONG et SHORT (un modèle par titre, année et direction) ;
+- couverture et titres absents par année d'utilisation ;
+- détail des dates d'entraînement/calibration, nombre d'observations, fichiers
+  et empreintes, filtrable par année/direction et téléchargeable en CSV ;
+- motifs de non-entraînement, regroupés par année/direction et exportables.
+
+Le manifeste et les poids directionnels participent à l'invalidation du cache.
+Des compteurs de rapport différents du manifeste vérifié invalident la vue.
+La page ne désérialise pas les poids et ne calcule aucune nouvelle performance.
+La première correction ne disposait pas d'AUC par titre : les compteurs ne
+sont pas une mesure de fiabilité directionnelle. Le complément suivant ajoute
+ces mesures, avec séparation explicite des jeux d'évaluation.
+
+Contrôle réel de `model-factory-20261106203103-91b063` : **6 588 poids présents,
+zéro manquant**, soit 3 294 LONG et 3 294 SHORT. Couverture par direction :
+**1 595 titres en 2024**, **1 699 en 2025**, sur 1 790 ; aucun modèle qualifié
+2020–2023, pour insuffisance d'historique/classes selon les critères gelés.
+Le compteur global « 1 terminé » concerne le bundle entier, pas un seul titre.
+Le chargement du vrai batch dans la vue corrigée réussit ; **27 tests ciblés**
+passent, dont affichage Streamlit, modèles manquants/corrompus et compteurs.
+
+Preuve du contrôle :
+`artifacts/operations/ml_training_bundle_audit/model-factory-20261106203103-91b063/20261106-v1/report.json`.
+
+## Métriques et périodes per-symbol — complément du 6 novembre 2026
+
+La section per-symbol propose désormais AUC, exactitude au seuil 0,5,
+exactitude équilibrée, précision parmi les scores ≥0,5, fréquence positive
+des labels et Brier. Les jeux **entraînement**, **calibration**, **test hors
+échantillon** et **test sans chevauchement** restent distincts. L'entraînement
+et la calibration ne constituent pas des tests indépendants. Une AUC non
+calculable (jeu vide ou une seule classe) reste vide.
+
+Le label est le résultat net de la stratégie propre à la branche : ouverture
+J+1, SL du contrat (5 % pour ce batch), sans TP/trailing, sortie open11.
+L'exactitude au seuil 0,5 n'est pas le taux gagnant du portefeuille Winner,
+ni l'évaluation du futur filtre TOP10 % Oracle. La phase sans chevauchement
+est fixée sur l'indice du calendrier global modulo11 ; ses échantillons
+annuels par titre sont petits et ne certifient pas un avantage stable.
+
+Les prochains entraînements conservent automatiquement ces diagnostics par
+modèle, les prédictions test et une copie du benchmark utilisé. Pour un ancien
+batch, `modelFactory.oracle_path.evaluate_directional` reconstruit les mesures
+sans `.fit`, ordre, replay de portefeuille, téléchargement ou écriture SQL.
+Les barres des titres sont les chunks d'origine vérifiés par SHA-256 ; les
+poids et leurs dates sont conservés. Si le benchmark d'origine n'était pas
+archivé, SPY est relu en SQL, figé dans le diagnostic et cette limite est
+affichée. Cela ne certifie pas une disponibilité historique PIT des révisions.
+
+Complément réellement terminé pour `model-factory-20261106203103-91b063` :
+
+- 6 588 modèles évalués sur leurs jeux disponibles, 1 790 titres examinés ;
+- test 2024 : **1 594 titres par direction**, 241 séances du 02/01/2024 au
+  13/12/2024, 384 111 observations LONG et autant SHORT ;
+- `KYOCY` possède des modèles 2024 mais aucune observation de test qualifiée ;
+- aucun test 2025 dans ces archives arrêtées fin 2024, malgré les modèles
+  annuels destinés à 2025 ; aucune performance 2025 n'est inventée ;
+- AUC médiane par titre en test 2024, toutes fenêtres : LONG **0,50167**,
+  SHORT **0,50661** ; sans chevauchement : **0,50000 / 0,50427**. Ce diagnostic
+  porte sur les historiques des titres, sans conditionnement au TOP Oracle.
+
+Les résultats sont sous `oracle_path/directional/diagnostics/report.json`,
+avec benchmark, progress et fichiers `oos-*.parquet`. Le manifeste de training
+et les poids d'origine ne sont pas modifiés. La page valide les liens vers
+le protocole/manifeste, les modèles et les empreintes des fichiers de test.
+Les résultats incohérents ne sont pas affichés comme qualifiés.
+
+Dans **Périodes de prédictions du batch**, les lignes per-symbol LONG et
+SHORT en SQL sont affichées même quand elles sont vides, avec un motif clair.
+Les scores NULL ne comptent pas comme des prédictions. Les tests per-symbol
+ont leurs propres lignes, séparées de l'OOF Oracle et des scores SQL servis.
+Pour ce batch, les deux tables SQL de prédiction sont encore vides : aucun
+ML Predict n'a été lancé par cette réparation.
+
+Vérification : **53 tests ciblés réussis**, reconstruction réelle terminée en
+252 secondes et affichage Streamlit vérifié avec les vraies données LONG/SHORT.
+Preuves complémentaires dans le dossier d'audit du batch :
+`metrics-tests.xml`, `enriched-periods.json`, `metrics-summary.json` et
+`enriched-streamlit-validation.json`.

@@ -111,8 +111,9 @@ def rows_from_payload(provider, payload, symbol):
 class RecoveringIntradaySource:
     """Complete SQL SIP first; overlay only missing timestamps in provider order."""
     def __init__(self, base, end, policy, *, cache_dir=None,
-                 fetcher=None, now=None, progress=None):
+                 fetcher=None, now=None, progress=None,daily_entry=False):
         self.base, self.end, self.policy = base, end, policy
+        self.daily_entry=daily_entry
         if cache_dir is None:
             from backtesting.isolation import active,local_path
             cache_dir=local_path('intraday-recovery-cache') if active() else Path('artifacts/winner_intraday_recovery')
@@ -279,6 +280,7 @@ class RecoveringIntradaySource:
         return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
 
     def entry_allowed(self, symbol, day):
+        if self.daily_entry:return True  # Daily protection fallback, never a future coverage entry filter.
         if self._remaining_dates is None:
             self._remaining_dates={}
             for s,d in self.remaining:
@@ -294,7 +296,7 @@ class RecoveringIntradaySource:
             days=self._session_days[index:]
             days = days[:self.policy.horizon_sessions+1] if self.policy.horizon_sessions is not None else days
             prior = self._session_days[index-1]
-            bad = [d.isoformat() for d in [prior, *days] if d in self._remaining_dates[symbol]]
+            bad = [d.isoformat() for d in (days if self.daily_entry else [prior,*days]) if d in self._remaining_dates[symbol]]
             self._entry_cache[key] = bad
             if bad:
                 self.exclusions[key] = dict(symbol=symbol, entry_date=day.isoformat(),

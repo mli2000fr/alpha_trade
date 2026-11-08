@@ -1,7 +1,7 @@
 """Découverte et chargement sûrs des univers texte configurables.
 
 Un identifiant d'univers est soit un nom de fichier résolu dans
-``config/univers`` (``universe-file:univers_filtred.txt``), soit un chemin
+``config/univers`` (``universe-file:univers_filtred_tradable.txt``), soit un chemin
 relatif à la racine du dépôt confiné sous ``config/``
 (``universe-file:config/univers_batch/univers_filtred_tradable.txt``).
 """
@@ -16,6 +16,35 @@ UNIVERSE_DIRECTORY = Path("config/univers")
 UNIVERSE_CONFIG_ROOT = Path("config")
 UNIVERSE_FILE_SOURCE_PREFIX = "universe-file:"
 LEGACY_TICKET_SOURCE = "ticket-recherche"
+DEFAULT_UNIVERSE_FILENAME = "univers_filtred_tradable.txt"
+# Old names are recognized only to migrate current UI selections, never as
+# loader aliases: replaying a historical source must not silently change it.
+RETIRED_UNIVERSE_FILENAMES = frozenset({
+    "oracle_balanced_400_202512.txt", "research_news_issuer_20261016.txt",
+    "ticket_mid_cap_400.txt", "ticket_recherche.txt",
+    "univers_expert_confirmation_300.txt", "univers_filtred_equities.txt",
+    "univers_filtred.txt", "univers_test_rapide.txt", "univers_test_tres_rapide.txt",
+})
+
+
+def is_retired_universe_source(value: str | None) -> bool:
+    raw = str(value or '').strip().replace('\\', '/')
+    if not raw.lower().startswith(UNIVERSE_FILE_SOURCE_PREFIX):
+        return False
+    path = raw[len(UNIVERSE_FILE_SOURCE_PREFIX):]
+    return (('/' not in path or path.lower().startswith('config/univers/'))
+            and Path(path).name.casefold() in RETIRED_UNIVERSE_FILENAMES)
+
+
+def validate_universe_export_destination(source: Path, output: Path) -> None:
+    """Research exports must never overwrite their input or the shared universe."""
+    target = output.resolve()
+    canonical_paths = {
+        (UNIVERSE_DIRECTORY / DEFAULT_UNIVERSE_FILENAME).resolve(),
+        (Path(__file__).resolve().parents[1] / UNIVERSE_DIRECTORY / DEFAULT_UNIVERSE_FILENAME).resolve(),
+    }
+    if target == source.resolve() or target in canonical_paths:
+        raise ValueError("La sortie de recherche ne doit pas écraser l'univers source ou canonique")
 
 
 def _is_bare_name(value: str) -> bool:
@@ -140,15 +169,15 @@ def default_universe_file_source(directory: Path = UNIVERSE_DIRECTORY) -> str:
     sources = list_universe_file_sources(directory)
     if not sources:
         raise FileNotFoundError(f"Aucun fichier .txt trouvé dans {directory}")
-    return sources[0]
+    canonical = universe_file_source(DEFAULT_UNIVERSE_FILENAME)
+    return next((item for item in sources if item.casefold() == canonical.casefold()), sources[0])
 
 
 def default_universe_file_source_or(
     fallback: str,
     directory: Path = UNIVERSE_DIRECTORY,
 ) -> str:
-    sources = list_universe_file_sources(directory)
-    return sources[0] if sources else fallback
+    return default_universe_file_source(directory) if list_universe_file_sources(directory) else fallback
 
 
 def is_universe_file_source(value: str | None) -> bool:

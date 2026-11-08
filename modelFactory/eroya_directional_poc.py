@@ -279,7 +279,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=("probe", "collect"), default="probe")
     parser.add_argument("--datasets", default="")
     parser.add_argument("--symbol", default="AAPL")
-    parser.add_argument("--symbol-file", default="config/univers/ticket_mid_cap_400.txt")
+    parser.add_argument("--symbol-file", default="config/univers/univers_filtred_tradable.txt")
     parser.add_argument("--start-date")
     parser.add_argument("--end-date")
     parser.add_argument("--max-pages", type=int, default=100)

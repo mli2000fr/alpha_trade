@@ -1,0 +1,2 @@
+
+Return tendency (1..10 or null), trend_status and evidence quality separately. The application alone applies the frozen direction_score_policy and retention checks. Do not output decision.

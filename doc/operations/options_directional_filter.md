@@ -3,8 +3,11 @@
 ## Activation et périmètre
 
 `config.yaml → options_directional_filter.enabled: true` active le défaut du
-batch `us_pipeline` et de la case **📊 Filtrage options — volume CALL/PUT + OI
-après Oracle — PAPER uniquement**. Le compte doit être déclaré en mode PAPER.
+batch `us_pipeline` et autorise la case **📊 Filtrage options — volume CALL/PUT + OI
+après Oracle — PAPER uniquement**. Depuis le 4 novembre 2026, cette case est
+**décochée par défaut dans l'IHM**. Le compte doit être déclaré en mode PAPER.
+Ce défaut est appliqué une fois aux sessions déjà ouvertes, avec l'exclusion
+per-symbol/per-sector également décochée ; les choix manuels suivants sont conservés.
 La sélection peut être réutilisée pour les autres comptes PAPER ; le risque et
 l'exécution sont calculés séparément, voir [le parcours multi-comptes](options_filter_multi_account.md).
 Une case décochée désactive le filtre pour le lancement IHM, pas pour le batch.
@@ -204,6 +207,16 @@ et fige la séance US. Le batch exige l'étape 10 si 11/12 utilisent le filtre.
 
 Pour des lancements manuels séparés, 11/12 utilisent le rapport le plus récent
 correspondant **exactement** à la séance, au modèle et à l'univers.
+Depuis le 3 novembre 2026, deux identifiants de fichiers peuvent désigner ce
+même univers : `universe-file:univers_filtred_tradable.txt` et
+`universe-file:config/univers_batch/univers_filtred_tradable.txt`, par exemple.
+L'acceptation exige que les deux fichiers existent, que leurs ensembles de
+symboles soient identiques et qu'ils correspondent à `inputs.json → universe`,
+dont l'empreinte est vérifiée. Un nom de fichier identique ne suffit pas ; aucun
+fichier absent n'est remplacé. Le rapport et son chemin source restent inchangés.
+La recherche puis la qualification conservent les contrôles de date, modèle,
+compte, fraîcheur, séance et intégrité. Un résultat plus récent altéré ou échoué
+reste bloquant, même lorsque son chemin source est un alias.
 Le preset d'univers reste celui des entrées archivées. Le changement de compte
 ne refait pas cette sélection : les décisions de risque, cibles et tentatives
 d'exécution appartiennent au compte consommateur. Un résultat plus récent invalide ne fait pas revenir à une ancienne
