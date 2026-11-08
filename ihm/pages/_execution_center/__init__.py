@@ -3544,7 +3544,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                      "Un modèle distinct doit être entraîné pour chaque horizon. Predict reprend l'horizon du modèle choisi ; "
                      "la durée de détention Winner reste configurée séparément."))
             st.info(f"Oracle parcours : H{ml_oracle_horizon}, LightGBM/CatBoost CPU selon le choix ci-dessous, validation walk-forward obligatoire. "
-                    "Choisir les dates de début ET fin dans 9. ML Train. "
+                    "Choisir les dates de début ET fin dans T1. ML Train. "
                     f"Le bundle ci-dessous peut ajouter deux modèles LONG/SHORT par titre en H{ml_oracle_horizon}. "
                     + "Global reste désactivé. "
                     "Modèles et labels séparés dans oracle_path. Scores raccordés à ML Predict/backtest/live, "

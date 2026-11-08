@@ -259,3 +259,20 @@ def test_pipeline_widget_enables_bundle_and_matches_h15_h20():
         assert '--oracle-path-directional' in cmd
         assert cmd[cmd.index('--oracle-horizon')+1]==str(horizon)
         assert any(f'sortie open{horizon+1}' in message.value for message in at.info)
+
+
+@pytest.mark.parametrize('horizon',[10,15,20])
+def test_training_protocol_freezes_selected_bundle_horizon_before_loading_prices(tmp_path,monkeypatch,horizon):
+    from tests.test_oracle_path import config
+    from modelFactory.oracle_path import train as trainer
+    class StopBeforePrices(Exception):pass
+    def stop(*args):raise StopBeforePrices()
+    monkeypatch.setattr(trainer,'nyse_sessions',stop)
+    monkeypatch.setattr(trainer,'load_security_discontinuities',lambda:{})
+    monkeypatch.setattr('common.config_loader.load_config',lambda *args:dict(oracle_path=dict(
+        directional=dict(enabled=True,horizon_sessions=10,oracle_top_n=25,selected_n=7))))
+    cfg=config(tmp_path/'batch',oracle_horizon=horizon,oracle_path_directional_enabled=True)
+    with pytest.raises(StopBeforePrices):trainer.train_oracle_path(cfg,None,'batch',[f'S{i}' for i in range(20)])
+    p=json.loads((tmp_path/'batch/oracle_path/protocol.json').read_text(encoding='utf-8'))
+    assert p['horizon']==p['directional_contract']['horizon_sessions']==horizon
+    assert p['directional_contract']['oracle_top_n']==25 and p['directional_contract']['selected_n']==7

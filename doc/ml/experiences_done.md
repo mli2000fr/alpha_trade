@@ -1,5 +1,36 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-08 — Winner continu 2021–2026, modèles annuels de l'IHM
+
+**TRAITEMENT LANCÉ — PRÉPARATION EN COURS, PAS DE RÉSULTAT.** Demande utilisateur :4 000 USD,
+du01/01/2021 au01/10/2026, six bundles annuels indiqués par les runs IHM,
+sans remise à zéro des positions/capital/DD/B4. SL5/open11, risque1,25 %,
+poids20 %, capacité2×, DD15/B4 avec liquidation50 %, frais et financement
+identiques. L'utilisateur a confirmé TOP20 % Oracle sur toutes les années,
+soit 358 candidats avant TOP10 LONG, y compris en2026. Scores existants, modèles et AUC vérifiés,
+prix SQL en lecture seule, aucun entraînement, téléchargement ou ordre.
+Trois tests de périmètre et calendrier passent.
+Les six sélections sources sont reproduites. Un coordinateur local attend
+les prix figés puis lance le portefeuille continu `uniform20pct`. La demande
+a été actualisée avant le départ du replay, sans recommencer le gel des prix.
+5 606 candidatures, dont1 078 en2026, avant risque et capital ; aucun résultat
+économique disponible à ce stade.
+[Protocole et modèles](winner_continu_modeles_annuels_2021_2026_20261108.md).
+Suivi : `artifacts/research/us_winner_continuous_annual_models/20261108-v2/progress.json`.
+
+## 2026-11-08 — GPT : favorables taille5, neutres à taille normale
+
+**TERMINÉ — RENDEMENT AMÉLIORÉ PAR RAPPORT AUX TAILLES NORMALES, DD AGGRAVÉ.**
+Clarification utilisateur :17 favorables renforcés5×,79 indéterminables et38
+sans news normaux ;59 avis défavorables et11 invalides exclus.134 candidatures.
+Même sélection à taille normale :−0,77 %, DD−12,98 %, capital final3 969,02 $.
+Avec5× :+6,62 %, DD−18,55 %, capital final4 264,90 $,47 trades18/29, taux38,30 %,
+capital engagé moyen1 504,02 $. Winner seul :+6,90 %, DD−10,86 %. Risque6,25 %
+et poids100 % sur favorables, capacité2× maintenue ; SL5/open11 inchangés.
+Adaptateur de dimensionnement limité au processus de replay, testé sur le moteur
+natif. Aucun nouvel appel GPT, aucune modification de production. Exploratoire.
+[Protocole et résultats](gpt_favorables_taille5_neutres_normaux_20261108.md).
+
 ## 2026-11-08 — GPT : achat sur avis FAVORABLE uniquement
 
 **TERMINÉ — TAUX GAGNANT EN HAUSSE SUR UN ÉCHANTILLON TRÈS PETIT.** Demande utilisateur : comparer taux gagnant et

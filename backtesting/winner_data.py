@@ -1,8 +1,12 @@
 """Read-only canonical price and archived factor inputs for Winner replay."""
+import logging
+
 import pandas as pd
 from sqlalchemy import bindparam, text
 
 from common.daily_bar_sources import select_daily_bars
+
+LOG = logging.getLogger(__name__)
 
 
 def daily_bars(conn, symbols, start, end):
@@ -15,9 +19,17 @@ def daily_bars(conn, symbols, start, end):
     frame=select_daily_bars(frame)
     # A preferred but invalid row is not replaced by a different price feed.
     numeric=frame[['open','high','low','close','volume']].apply(pd.to_numeric,errors='coerce')
-    valid=(numeric.gt(0).all(axis=1)&frame.is_filled.eq(0)&frame.data_adjustment.eq('split')
+    # Zero reported volume is not a missing opening price. Keep the original
+    # volume (never synthesize liquidity) while qualifying OHLC separately.
+    valid=(numeric[['open','high','low','close']].gt(0).all(axis=1)
+           &numeric.volume.ge(0)&frame.is_filled.eq(0)&frame.data_adjustment.eq('split')
            &numeric.high.ge(numeric[['open','close']].max(axis=1))
            &numeric.low.le(numeric[['open','close']].min(axis=1)))
+    zero_volume=valid&numeric.volume.eq(0)
+    if zero_volume.any():
+        LOG.warning('Replay daily : %d lignes OHLC valides avec volume nul ; prix conservés, '
+                    'volume inchangé (aucune liquidité inventée) : %s',int(zero_volume.sum()),
+                    frame.loc[zero_volume,['symbol','date']].head(20).to_dict('records'))
     return frame.loc[valid].copy()
 
 

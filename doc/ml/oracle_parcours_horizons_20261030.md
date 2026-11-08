@@ -5,14 +5,20 @@ l'horizon du modèle parcours, à côté du choix LightGBM / CatBoost / automati
 
 ## Depuis la page Pipeline
 
-1. Cocher **🔮 Oracle Extreme parcours — modèle séparé**.
+1. Cocher **🔮 Oracle Extreme parcours**.
 2. Choisir **Horizon — Oracle Extreme parcours** : H10, H15 ou H20.
 3. Choisir l'algorithme, l'univers et les dates d'entraînement.
-4. Lancer **9. ML Train**. Chaque horizon nécessite son propre modèle et un
+4. Lancer **T1. ML Train**. Chaque horizon nécessite son propre modèle et un
    nouveau batch : un modèle H20 existant ne devient pas H10 en changeant le menu.
 5. Dans **10. ML Predict**, sélectionner le batch entraîné correspondant.
    La prédiction lit l'horizon dans le contrat de ce modèle. Elle n'utilise pas
    un menu d'entraînement conservé dans la session pour réinterpréter ses poids.
+
+Depuis le8 novembre, la case **Bundle Oracle + deux modèles Per-Symbol LONG/SHORT**
+est disponible pour les trois horizons. Les branches par titre utilisent le même
+horizon que l'Oracle : SL configuré, sans TP/trailing, sortie open11/open16/open21.
+Voir [contrat du bundle parcours](oracle_parcours_bundle_directionnel.md).
+La sélection opérationnelle reste LONG ; entraîner SHORT n'active pas d'ordres SHORT.
 
 Le filtre options utilise toujours le modèle désigné par sa configuration et
 le batch `us_pipeline` conserve `options_directional_filter.default_oracle_batch_id`.

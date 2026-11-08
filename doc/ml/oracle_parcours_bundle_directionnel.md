@@ -1,4 +1,4 @@
-# Oracle parcours H10 + modèles annuels par titre
+# Oracle parcours H10 / H15 / H20 + modèles annuels par titre
 
 Le mode parcours peut désormais entraîner les deux branches LONG et SHORT dans
 le même batch que l'Oracle d'amplitude. La sélection opérationnelle reste LONG
@@ -7,7 +7,7 @@ Winner**. Le score SHORT n'est ni inversé en LONG ni utilisé pour un ordre SHO
 
 ## Depuis Pipeline / T1 ML Train
 
-1. Cocher **Oracle Extreme parcours** (coché par défaut), choisir **H10**.
+1. Cocher **Oracle Extreme parcours** (coché par défaut), choisir **H10, H15 ou H20**.
 2. Cocher **Bundle Oracle + deux modèles Per-Symbol LONG/SHORT**. Son défaut
    vient de `oracle_path.directional.enabled`, actuellement `true`.
 3. Choisir l'univers, les dates et l'algorithme de l'Oracle. Les modèles par titre
@@ -16,8 +16,13 @@ Winner**. Le score SHORT n'est ni inversé en LONG ni utilisé pour un ordre SHO
    le mode per-sector ne peut pas le remplacer. Le bundle terminal legacy reste
    disponible quand la case parcours est décochée, avec son ancien contrat H20.
 
-Le CLI ajoute `--oracle-path-model-only --oracle-horizon 10
---oracle-path-directional`. Les trois anciens batches du 4 novembre à 13:19
+Le CLI ajoute `--oracle-path-model-only --oracle-horizon H
+--oracle-path-directional`, avec H égal à10,15 ou20. L'horizon de la branche
+directionnelle est automatiquement aligné sur l'Oracle sélectionné et gelé
+dans `directional_contract.horizon_sessions`. L'ancienne valeur10 dans le YAML
+ne force pas une branche H10 quand l'IHM choisit H15 ou H20.
+
+Les trois anciens batches du 4 novembre à 13:19
 restent des Oracle seuls : ils ne reçoivent aucun modèle ni nouveau contrat
 rétroactivement. Il faut un nouveau batch pour ce bundle.
 
@@ -42,10 +47,10 @@ de son batch tant qu'un paramétrage d'inférence distinct n'est pas raccordé.
 
 ## Cibles et chronologie
 
-- Oracle : TOP20 % de l'amplitude maximale absolue pendant J+1..J+10, depuis
+- Oracle : TOP20 % de l'amplitude maximale absolue pendant J+1..J+H, depuis
   la clôture J, sans direction. Son entraînement walk-forward reste inchangé.
-- LONG : achat à l'ouverture J+1, SL à 5 %, sans TP/trailing ; dix séances de
-  détention, puis sortie open11. Classe positive si le résultat net est positif.
+- LONG : achat à l'ouverture J+1, SL à 5 % (ou valeur configurée), sans TP/trailing ;
+  H séances de détention, puis sortie open(H+1). Classe positive si le résultat net est positif.
 - SHORT : cible symétrique avec stop au-dessus de l'entrée et résultat net d'une
   vente à découvert. Cette branche ne comprend pas emprunt/locate/dividendes :
   elle est archivée et **non utilisée pour le trading**.
@@ -53,7 +58,7 @@ de son batch tant qu'un paramétrage d'inférence distinct n'est pas raccordé.
   d'ouverture défavorable. Aucun sommet ultérieur ne répare un stop déjà touché.
 - Pour l'année Y : apprentissage avant Y−1, calibration en Y−1 ; les résultats
   des labels doivent être disponibles strictement avant chaque frontière.
-  Chaque label est conservativement disponible seulement à la sortie open11.
+  Chaque label est conservativement disponible seulement à la sortie open(H+1).
 - Minimum 756 observations d'apprentissage et 126 de calibration, avec minimums
   de classes 40/15. Modèle constant ou historique insuffisant : motif consigné,
   aucun modèle ancien/futur ni score neutre substitué.
@@ -75,7 +80,29 @@ dates et motifs d'absence dans un bloc distinct (voir
 Changer le YAML n'altère pas un batch existant. Le champ `enabled` règle le défaut
 IHM, pas l'activation d'un compte. Les protections effectives de Winner restent
 son propre contrat : les garder alignées avec la cible si l'on veut comparer
-avec l'expérience SL5/open11. Ce raccordement ne garantit aucun rendement.
+avec l'expérience SL5/open(H+1). Choisir un Oracle H20 ne modifie donc pas le
+`winner_pyramiding.horizon_sessions` du portefeuille. Ce raccordement ne garantit aucun rendement.
+
+| Horizon choisi | Oracle amplitude | Branches LONG/SHORT : durée et sortie | Diagnostics sans chevauchement |
+| --- | --- | --- | --- |
+| H10 | J+1..J+10 | dix séances, open11 | phase fixe de11 séances |
+| H15 | J+1..J+15 | quinze séances, open16 | phase fixe de16 séances |
+| H20 | J+1..J+20 | vingt séances, open21 | phase fixe de21 séances |
+
+Depuis le8 novembre2026, H15/H20 sont raccordés au training, aux diagnostics
+et à la lecture des modèles pour Predict/backtest. Les manifestes dont l'horizon
+directionnel diffère de l'Oracle sont refusés, même si les empreintes ont été
+recalculées. Les anciens contrats H10 restent lisibles. Aucun poids existant
+n'est converti et aucune migration SQL n'est requise : le batch identifie le
+contrat d'horizon, les prédictions restent séparées par batch. Il faut entraîner
+un nouveau batch pour obtenir les nouvelles branches H15/H20.
+
+Validation du raccordement du8 novembre :81 tests passent, incluant l'IHM sur
+les trois choix, les flags de commande, le protocole réellement gelé, les labels
+et leur maturité, les diagnostics sans chevauchement, ainsi qu'un entraînement
+annuel LightGBM LONG/SHORT puis rechargement, prédiction et contrôle de traçabilité
+sur un petit jeu par horizon. Aucun entraînement utilisateur complet n'a été
+lancé par cette modification. Les anciens modèles stockés restent inchangés.
 
 ## Predict, risque, exécution et replay
 
