@@ -1,5 +1,58 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-09 — Volatilité 20 % + régime : profil IHM et cinq extensions
+
+**TERMINÉ — CINQ VARIANTES IMPORTÉES EN IHM, AUCUN ÉCHEC.** Nouveau choix initial
+du menu backtest : « Volatilité 20 % + régime », base Q051 0,50, plafond 1×,
+TOP10 % Oracle → TOP5 LONG, SL5/open11, B4 off. Options de covariance 60 séances
+et régime SPY transmises au moteur natif de replay, avec revalidation native
+après réduction de quantité. Graphique historique Q051/profil protégé/SPY
+accessible par bouton sous « Réappliquer le profil choisi », mesures daily et
+intraday distinctes. Aucun changement de production.
+
+Cinq cas figés, 2021–01/10/2026, 4 000 USD continus, mêmes modèles annuels H10 :
+profil protégé avec plafond 2× ; profil protégé sans per-symbol ; Q051 sans
+per-symbol ; Q088 sans per-symbol ; Q088 sans per-symbol + vol.20 %/régime.
+Sans per-symbol signifie tous les candidats Oracle en ordre d’amplitude :
+TOP10 % pour Q051, TOP20 % pour Q088, sans score LONG/AUC ni TOP5/TOP10.
+Maximum 20 positions, frais et financement conservés. Prix d’origine figés
+inchangés ; extension SQL en lecture seule pour les nouveaux couples titre/date.
+Résultats rendement / DD intraday : protégé plafond 2× **+125,98 % / −24,29 %**,
+strictement identique à la référence protégée plafond 1× ; protégé sans
+per-symbol **−1,33 % / −43,39 %** ; Q051 sans per-symbol **+166,88 % / −74,62 %** ;
+Q088 sans per-symbol **+246,94 % / −58,36 %** ; Q088 sans per-symbol + vol/régime
+**+4,29 % / −39,89 %**. Le retrait du classement change aussi la largeur des
+candidatures admises au risque : ces cas ne mesurent pas l’AUC directionnelle
+du per-symbol isolément. Aucun nouveau cas n’améliore simultanément rendement
+et DD du profil protégé initial. Les cinq bilans natifs restent
+`INCOMPLETE_COVERAGE` (protections daily en secours), distinct de l’absence
+d’échec technique. Graphique capital/DD avec SPY produit et vérifié.
+Coordinateur : `scripts/research/us_winner_vol20_extensions_20261109.py` ;
+tableaux, graphiques et sources des imports IHM sous
+`artifacts/research/us_winner_vol20_extensions/20261109-v1`.
+[Détails et limites](winner_q051_budget_risque_20261109.md).
+
+## 2026-11-09 — Q051 H10 : dimensionnement réduit et budget de volatilité portefeuille
+
+**TERMINÉ — TÉMOIN PASS, TROIS VARIANTES IMPORTÉES EN IHM.** GO utilisateur pour réduire
+le DD du Q051_050 continu à +206,51 % / DD −36,89 %, mêmes modèles/signaux/prix,
+2021–01/10/2026, 4 000 USD. STATIC75 : risque 0,90 %, poids 15 %, cap 0,75×.
+VOL20 : quantité native plafonnée par volatilité prévue du portefeuille 20 %,
+covariance 60 séances connues la veille, positions et ordres en attente inclus.
+REGIME_VOL20 ajoute le filtre SPY >98 % SMA200. Nouvelles entrées seulement,
+aucune liquidation des détenus, SL5/open11 conservés, B4 off. Risque natif
+réappliqué après réduction ; aucun changement du moteur de comptabilité.
+Témoin complet inactif reproduit sur neuf indicateurs avant les trois processus.
+Huit tests passent. STATIC75 +130,01 %, DD daily/intraday −27,39/−27,40 % ; VOL20
++106,82 %, DD −23,40/−24,29 % ; REGIME_VOL20 +125,98 %, mêmes DD, 940 trades et
+36,17 % gagnants, capital final 9 039,00 USD. Les deux budgets atteignent le critère
+DD quotidien pas pire que SPY (−25,36 %), REGIME_VOL20 ayant le meilleur rendement
+de ces deux cas. SPY hors dividendes/frais +103,56 % : pas d'alpha total-return
+certifié. Aucun historique de covariance manquant, couverture intraday incomplète
+conservée. Imports IHM vérifiés, aucun ordre ou fournisseur/SQL write.
+Étude exploratoire, pas de plafond de DD futur garanti.
+[Protocole](winner_q051_budget_risque_20261109.md).
+
 ## 2026-11-08 — Consensus EODHD avant résiliation : H5/H10/H20 et dépendances
 
 **TERMINÉ — PAS DE GAIN DIRECTIONNEL DÉMONTRÉ, AUCUNE PROMOTION.** Snapshots réels

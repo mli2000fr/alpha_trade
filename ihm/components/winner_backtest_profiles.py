@@ -7,9 +7,12 @@ No production configuration or model contract is modified.
 import streamlit as st
 
 Q088_MARKER = 'bt_winner_q088_size125_b4dd15_defaults_20261107'
-DEFAULT_PROFILE = 'q051'
-DEFAULT_PROFILE_MARKER = 'bt_winner_q051_default_20261108'
+DEFAULT_PROFILE = 'q051_vol20_regime'
+DEFAULT_PROFILE_MARKER = 'bt_winner_vol20_regime_default_20261109'
 Q088_WIDGETS = {
+    'bt_wp_portfolio_vol_enabled': False, 'bt_wp_portfolio_vol_target': 20.,
+    'bt_wp_portfolio_vol_lookback': 60, 'bt_wp_entry_regime_enabled': False,
+    'bt_wp_entry_regime_sma': 200, 'bt_wp_entry_regime_threshold': -2.,
     'bt_winner_daily_entry': True,
     'bt_wp_sl': 5., 'bt_wp_tp_enabled': False, 'bt_wp_trailing_enabled': False,
     'bt_wp_horizon_enabled': True, 'bt_wp_horizon': 10,
@@ -42,12 +45,22 @@ Q051_WIDGETS = {
 }
 
 PROFILE_LABELS = {
-    'q051': 'Q051 — seuils 0,50, plafond de risque 1× (défaut)',
+    'q051_vol20_regime': 'Volatilité 20 % + régime (défaut)',
+    'q051': 'Q051 — seuils 0,50, plafond de risque 1×',
     'q088': 'Q088 — risque réduit + B4/DD15',
     'production': 'Réglages de production — config.yaml',
     'reference': 'Ancien test de référence',
 }
 PROFILE_DESCRIPTIONS = {
+    'q051_vol20_regime': (
+        'Base Q051 : TOP10 % Oracle → TOP5 LONG per-symbol, score > 0,50, AUC ≥ 0,50. '
+        'SL5 %, sans TP, trailing ni renforcement, sortie open11 ; entrée journalière J+1. '
+        'Budget de volatilité annualisée du portefeuille de 20 %, covariance des 60 séances précédentes : '
+        'la quantité des nouveaux achats peut être réduite, jamais augmentée. '
+        'Nouveaux achats autorisés seulement si SPY clôture au-dessus de 98 % de sa moyenne 200 séances à J. '
+        'Plafond de risque 1×, capacité du compte margin 2× ; B4/DD15 désactivé. '
+        'Référence exploratoire 2021–2026 avec modèles annuels : +125,98 %, DD intraday −24,29 %. '
+        '20 % est une cible de volatilité, pas un plafond de drawdown. Les positions détenues gardent leurs protections.'),
     'q088': (
         'TOP20 % Oracle → TOP10 LONG per-symbol, score > 0,60 et AUC ≥ 0,60. '
         'Risque par entrée 1,25 %, poids maximal 20 %, plafond de risque 2×. '
@@ -84,7 +97,9 @@ def apply_research_defaults(profile):
     for key in list(st.session_state):
         if key.startswith(('bt_q088_selection_', 'bt_research_selection_')):
             del st.session_state[key]
-    st.session_state.update({'q088': Q088_WIDGETS, 'q051': Q051_WIDGETS}[profile])
+    widgets={'q088': Q088_WIDGETS, 'q051': Q051_WIDGETS,
+        'q051_vol20_regime':{**Q051_WIDGETS,'bt_wp_portfolio_vol_enabled':True,'bt_wp_entry_regime_enabled':True}}
+    st.session_state.update(widgets[profile])
     st.session_state['bt_winner_settings_profile'] = profile
     st.session_state[Q088_MARKER] = True
 
@@ -96,19 +111,20 @@ def apply_q088_defaults():
 def initialize_research_selection(batch, bundle):
     """Seed once per batch; subsequent reruns preserve the user's edits."""
     profile = st.session_state.get('bt_winner_settings_profile')
-    if profile not in ('q088', 'q051'):
+    if profile not in ('q088', 'q051', 'q051_vol20_regime'):
         return
+    q051=profile!='q088'
     # Migrate the previous Q051 0.60 defaults once, then preserve manual edits.
-    version = '_050_20261108' if profile == 'q051' else ''
+    version = '_050_20261108' if q051 else ''
     marker = f'bt_research_selection_{profile}_{batch}{version}'
     if st.session_state.get(marker):
         return
     pool_key = f'bt_per_symbol_pool_{batch}' if bundle else f'bt_winner_top_{batch}_False'
     st.session_state[pool_key+'_mode'] = 'Pourcentage de l’univers'
-    st.session_state[pool_key+'_pct'] = 10. if profile == 'q051' else 20.
+    st.session_state[pool_key+'_pct'] = 10. if q051 else 20.
     if bundle:
-        count = 5 if profile == 'q051' else 10
-        threshold = .5 if profile == 'q051' else .6
+        count = 5 if q051 else 10
+        threshold = .5 if q051 else .6
         st.session_state.update({
             f'bt_winner_per_symbol_long_{batch}': True,
             f'bt_per_symbol_allow_long_{batch}': True,
@@ -140,4 +156,7 @@ def render_profile_selector(profile):
                'Les profils Q051/Q088 ont été étudiés avec un bundle Oracle H10 + per-symbol.')
     st.button('Réappliquer le profil choisi', on_click=apply_selected_profile,
         key='bt_winner_profile_reload')
+    if st.button('Voir les courbes et leur comparaison',key='bt_winner_profile_comparison'):
+        from ihm.components.winner_profile_comparison import show_reference_comparison
+        show_reference_comparison()
     return selected

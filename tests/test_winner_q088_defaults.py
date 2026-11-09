@@ -76,15 +76,23 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     at.run(timeout=30)
     assert not at.exception
     initial=at.session_state['result']
-    assert at.selectbox(key='bt_winner_profile_choice').value=='q051'
+    assert at.selectbox(key='bt_winner_profile_choice').value=='q051_vol20_regime'
     assert initial['winner_top_n']==179 and initial['winner_per_symbol_top_long']==5
     assert initial['winner_per_symbol_min_long_probability']==.5
     assert initial['winner_per_symbol_min_long_auc']==.5
+    assert initial['winner_portfolio_vol_target']==.20
+    assert initial['winner_entry_regime_filter']
+    parsed_initial=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**initial))[4:])
+    assert parsed_initial.portfolio_vol_target==.20 and parsed_initial.entry_regime_filter
     assert not initial['winner_drawdown_controller_enabled']
     assert at.number_input(key='bt_wr_gross').value==1.
+    at.button(key='bt_winner_profile_comparison').click().run(timeout=30)
+    assert not at.exception
+    assert len(at.dataframe)>=1
     at.selectbox(key='bt_winner_profile_choice').select('q088').run(timeout=30)
     assert not at.exception
     result=at.session_state['result']
+    assert result['winner_portfolio_vol_target'] is None and not result['winner_entry_regime_filter']
     assert result['winner_top_n']==358
     assert result['winner_per_symbol_long_enabled'] and result['winner_per_symbol_allow_long']
     assert not result['winner_per_symbol_allow_short']
@@ -114,7 +122,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert p['confirmation_bars']==0 and p['entry_valid_sessions']==1
     assert asdict(policy)==before_policy and asdict(risk)==before_risk
     assert at.selectbox(key='bt_winner_profile_choice').value=='q088'
-    assert len(at.selectbox(key='bt_winner_profile_choice').options)==4
+    assert len(at.selectbox(key='bt_winner_profile_choice').options)==5
     assert any('+35,13 %' in message.value for message in at.info)
     assert not any(b.key in ('bt_winner_reset_q088','bt_winner_reset_reference','bt_winner_reset_settings')
                    for b in at.button)
@@ -175,8 +183,8 @@ def test_old_q088_default_migrates_once_without_overriding_later_selection(monke
         Q088_MARKER:True,'bt_winner_settings_profile':'q088','bt_winner_profile_choice':'q088',
         'bt_wr_gross':2.,'bt_wr_controller_enabled':True}
     monkeypatch.setattr(settings.st,'session_state',state)
-    assert settings.initialize_reference_profile()=='q051'
-    assert state['bt_winner_profile_choice']=='q051'
+    assert settings.initialize_reference_profile()=='q051_vol20_regime'
+    assert state['bt_winner_profile_choice']=='q051_vol20_regime'
     assert state['bt_wr_gross']==1. and not state['bt_wr_controller_enabled']
     settings.reset_execution_settings('q088')
     state['bt_winner_profile_choice']='q088'

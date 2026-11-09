@@ -25,7 +25,7 @@ def initialize_reference_profile():
     if not st.session_state.get(Q088_MARKER):
         apply_research_defaults(DEFAULT_PROFILE)
     if not st.session_state.get(DEFAULT_PROFILE_MARKER):
-        if st.session_state.get('bt_winner_settings_profile') == 'q088':
+        if st.session_state.get('bt_winner_settings_profile') in ('q088','q051'):
             reset_execution_settings(DEFAULT_PROFILE)
             st.session_state['bt_winner_profile_choice'] = DEFAULT_PROFILE
         st.session_state[DEFAULT_PROFILE_MARKER] = True
@@ -44,7 +44,7 @@ def reset_execution_settings(profile='production'):
     from ihm.components.winner_backtest_profiles import Q088_MARKER,DEFAULT_PROFILE_MARKER,apply_research_defaults
     st.session_state[Q088_MARKER]=True
     st.session_state[DEFAULT_PROFILE_MARKER]=True
-    if profile in ('q088','q051'):
+    if profile in ('q088','q051','q051_vol20_regime'):
         apply_research_defaults(profile)
 
 
@@ -58,7 +58,7 @@ def render_policy_settings(policy,*,reference_defaults=False,daily_entry_enabled
     with st.container():
         profile=st.session_state.get('bt_winner_settings_profile')
         st.caption((f'Profil {profile.upper()} : SL5 %, sans TP/trailing, H10, position complète, sans confirmation. '
-                    if profile in ('q088','q051') else
+                    if profile in ('q088','q051','q051_vol20_regime') else
                     'Défauts du test de référence : aucune confirmation et aucun délai SIP. '
                     'Les autres protections viennent de config.yaml. ' if reference_defaults else
                     'Valeurs par défaut : section winner_pyramiding de config.yaml. ')+

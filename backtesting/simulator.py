@@ -784,6 +784,7 @@ class BacktestEngine:
         winner_corporate_actions=None,
         winner_factor_source=None,
         winner_selection_source=None,
+        winner_entry_risk_policy=None,
         **legacy_kwargs,
     ) -> BacktestResult:
         """Lance le backtest.
@@ -816,7 +817,8 @@ class BacktestEngine:
                 signals_df=signals_df, volume=volume, sector_map=sector_map,
                 intraday_source=intraday_source, research_assumptions=winner_research_assumptions,
                 progress=winner_progress, corporate_actions=winner_corporate_actions,
-                factor_context_source=winner_factor_source, selection_source=winner_selection_source)
+                factor_context_source=winner_factor_source, selection_source=winner_selection_source,
+                entry_risk_policy=winner_entry_risk_policy)
         constraints = cfg.trading_constraints
 
         signals = signals_df.copy()
