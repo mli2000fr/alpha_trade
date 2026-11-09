@@ -214,6 +214,27 @@ def render_winner_backtest():
                    'doit être actif sur le compte concerné. En mode '
                    'SIP retardé, les bougies ne sont utilisables qu’après le délai et l’ordre reste '
                    'limité au plafond accepté par le risque. Un cours qui dépasse ce plafond peut ne pas être acheté.')
+    with st.expander('Budget de volatilité du portefeuille et régime SPY',expanded=profile=='q051_vol20_regime'):
+        portfolio_vol=st.checkbox('Limiter les nouveaux achats par la volatilité du portefeuille',
+            value=False,key='bt_wp_portfolio_vol_enabled')
+        vol_target=float(st.number_input('Cible de volatilité annualisée du portefeuille (%)',
+            min_value=1.,max_value=100.,value=20.,key='bt_wp_portfolio_vol_target',disabled=not portfolio_vol))/100.
+        vol_lookback=int(st.number_input('Séances passées pour la covariance du portefeuille',
+            min_value=2,max_value=252,value=60,key='bt_wp_portfolio_vol_lookback',disabled=not portfolio_vol))
+        entry_regime=st.checkbox('Filtrer les nouveaux achats selon le régime SPY',
+            value=False,key='bt_wp_entry_regime_enabled')
+        regime_sma=int(st.number_input('Moyenne mobile SPY (séances)',min_value=2,max_value=500,value=200,
+            key='bt_wp_entry_regime_sma',disabled=not entry_regime))
+        regime_threshold=float(st.number_input('Tolérance sous la moyenne SPY (%)',min_value=-50.,max_value=50.,
+            value=-2.,key='bt_wp_entry_regime_threshold',disabled=not entry_regime))/100.
+        st.caption('Données arrêtées à J, avant l’ouverture J+1. Le budget peut réduire ou refuser un nouvel achat ; '
+            'il ne liquide pas les titres détenus. Le régime autorise les achats si SPY > moyenne × (1 + tolérance). '
+            'Ce budget utilise les corrélations du portefeuille ; il est distinct de l’ancien ciblage de volatilité SPY. '
+            'Aucune garantie de DD maximal ; historique insuffisant : achat refusé et consigné.')
+        if (portfolio_vol or entry_regime) and not daily_entry:
+            st.error('Ces protections nécessitent l’entrée journalière J+1.');st.stop()
+        if portfolio_vol and policy.reinforcement_enabled:
+            st.error('Désactiver le renforcement pour utiliser le budget de volatilité du portefeuille.');st.stop()
     try:
         causal = first_causal_date(folds).date()
         if directional_bundle:
@@ -339,6 +360,9 @@ def render_winner_backtest():
         winner_risk_overrides=risk_changes,winner_policy_overrides=policy_changes,
         winner_drawdown_controller_enabled=controller_enabled,
         winner_daily_entry_enabled=daily_entry,
+        winner_portfolio_vol_target=vol_target if portfolio_vol else None,
+        winner_portfolio_vol_lookback=vol_lookback,winner_entry_regime_filter=entry_regime,
+        winner_entry_regime_sma_window=regime_sma,winner_entry_regime_bear_threshold=regime_threshold,
         winner_factor_model=factors,winner_factor_market_cap_check=cap_check, winner_research_assumptions=assumptions,
         oracle_batch_id=batch, max_positions=int(positions), account_type=account,
         margin_interest_rate=interest/100.,

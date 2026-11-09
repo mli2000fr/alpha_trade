@@ -587,6 +587,9 @@ def _extract_run_dates(run: dict[str, object]) -> tuple[str | None, str | None]:
         pattern=r'''(?<!\S)(--(?:start|end)(?:-date)?)(?:=|\s+)["']?(\d{4}-\d{2}-\d{2})(?=["']?(?:\s|$))'''
         for flag,value in re.findall(pattern,str(run.get('command_display') or '')):
             if aliases[flag] not in dates:accept(flag,value)
+    if run.get('imported_result'):
+        for flag,key in (('--start','start_date'),('--end','end_date')):
+            if aliases[flag] not in dates and isinstance(run.get(key),str):accept(flag,str(run[key]))
     return dates.get('start'),dates.get('end')
 
 
@@ -595,7 +598,8 @@ def _run_qualification_status(run: dict[str,object]) -> str | None:
     if run.get('status')!='completed':return None
     command=run.get('command')
     tokens=[str(t) for t in command] if isinstance(command,list) else str(run.get('command_display') or '').split()
-    if 'backtesting.winner_campaign_replay' not in tokens:return None
+    if ('backtesting.winner_campaign_replay' not in tokens
+            and run.get('result_engine')!='winner_campaign_replay'):return None
     directory=_resolve_run_dir(run)
     if directory is None:return None
     for filename in ('progress.json','report.json'):
@@ -636,6 +640,8 @@ def _format_run_inspect_label(run: dict[str, object], batch_comments: dict[str, 
     start, end = _extract_run_dates(run)
     if start and end:
         prefix = f"{start} -- {end}"
+        if run.get('imported_result') and run.get('run_label'):
+            prefix += f" | {run['run_label']}"
     else:
         prefix = str(run.get("run_label", run.get("run_kind", "")))
     base = (
@@ -4327,6 +4333,16 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     artifacts = cast(dict[str, object], report_payload.get("artifacts", {}))
     diagnostics = cast(dict[str, object], report_payload.get("diagnostics", {}))
     if report_payload.get('run_metadata', {}).get('engine') == 'winner_campaign_replay':
+        if report_payload.get('run_metadata',{}).get('imported_result'):
+            st.info('Simulation continue avec changement de modèle chaque année. Le capital, les positions et le risque sont transmis entre années, sans remise à zéro. Résultat importé, sans nouvelle simulation.')
+            annual=report_payload.get('annual_summary')
+            if isinstance(annual,list) and annual:
+                with st.expander('Résultats annuels du portefeuille continu et modèles utilisés'):
+                    columns=['year','initial_equity','final_equity','return_pct','max_drawdown_pct','win_pct','closed_lot_trades','model']
+                    st.dataframe(pd.DataFrame(annual).reindex(columns=columns).rename(columns={
+                        'year':'Année','initial_equity':'Capital hérité ($)','final_equity':'Capital final ($)',
+                        'return_pct':'Rendement (%)','max_drawdown_pct':'DD max (%)','win_pct':'Gagnants (%)',
+                        'closed_lot_trades':'Trades clôturés','model':'Modèle annuel'}),hide_index=True,use_container_width=True)
         if diagnostics.get('status') == 'INCOMPLETE_COVERAGE':
             st.warning('Winner : couverture incomplète. Ces résultats ne constituent pas un backtest complètement qualifié.')
             gaps=diagnostics.get('coverage_gaps',[])
@@ -5914,7 +5930,7 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
                 "run_id": run.get("run_id"),
                 "commande": run.get("run_kind"),
                 "libellé": run.get("run_label"),
-                "statut": _status_badge(str(run.get("status", ""))),
+                "statut": _run_status_badge(run),
                 "début": run.get("executed_at"),
                 "fin": run.get("finished_at") or "—",
                 "durée": format_duration_hhmmss(run.get("duration_seconds")),

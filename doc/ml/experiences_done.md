@@ -1,8 +1,324 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-09 — TOP5 fusion relative per-symbol/per-sector 50/50
+
+**EXTENSION 2026 TERMINÉE ET IMPORTÉE** après remise du bilan 2021–2025 : mêmes quatre variantes
+continues, jusqu’au 01/10/2026 pour comparaison avec Q051 vol20/régime +125,98 %.
+Oracle/per-symbol annuels archivés inchangés, modèles sectoriels 2026 seuls à
+préparer sur données fin2025, inférence SQL lecture seule avec reproduction
+des scores per-symbol archivés exigée. Capital/positions continus depuis2021.
+Racine neuve `artifacts/research/us_q051_rank_fusion/20261109-v2-2026/`, prérequis
+dans `artifacts/research/us_q051_per_sector/20261109-v5-2026/`. Aucun résultat
+2026 annoncé au lancement, aucune modification de production. Préparation
+terminée :22 modèles sectoriels,31 209 scores per-symbol reproduits exactement,
+sélections2021–2025 identiques aux archives v1 ;1 443 séances/7 215 signaux par
+variante. Quatre replays terminés sans échec de calcul ; validation PASS,
+courbes2021–2025 strictement identiques (écart0), compteurs annuels/globaux et
+capital final rapprochés. Résultats continus2021–01/10/2026 : Q051 fusion
+**+5,26 %/DD−53,38 %/33,02 % gagnants**, témoin relatif sur mêmes candidats
+**+202,67 %/DD−32,74 %/36,71 %** ; avec vol20/régime, fusion
+**−11,78 %/DD−41,69 %/33,44 %**, relatif **+104,00 %/DD−22,00 %/36,49 %**.
+Témoins historiques avec seuils : Q051 **+206,51 %/DD−36,89 %/35,01 %**,
+vol20/régime **+125,98 %/DD−24,29 %/36,17 %**. Fusion50/50 non retenue après
+extension2026 également. Le relatif réduit le DD au prix d’une partie du
+rendement face aux témoins, mais change population et seuils simultanément.
+Quatre imports IHM et graphique disponibles ; couverture intraday incomplète
+avec secours OHLC daily conservée. Aucun changement de production.
+
+**TERMINÉ — QUATRE REPLAYS IMPORTÉS ; FUSION 50/50 NON RETENUE.** GO utilisateur pour
+combiner les deux scores. TOP179 Oracle fixé, population commune de candidats
+ayant deux probabilités causales disponibles ; moyenne 50/50 des percentiles
+de probabilité puis TOP5, égalités par rang Oracle/symbole. Ni seuil absolu
+de probabilité >0,50 ni gate AUC≥0,50 : il s’agit d’une sélection relative,
+pas d’une double confirmation LONG. Cinq candidats réellement sélectionnés
+sur les1 255 séances, 6 275 signaux, minimum83 candidats doublement couverts.
+
+Deux profils : Q051 et vol.20 %/60 séances + régime SPY >98 % SMA200, mêmes
+Oracles annuels2021–2025, 4 000 USD continus, SL5/open11, entrée J+1 sans
+confirmation, pas de TP/trailing, achats1×/capacité margin2×, B4 off, frais et
+financement conservés. Deux témoins ajoutés : TOP5 relatif per-symbol sans
+seuils, sur la même population commune, avec chacun des deux profils. Ils
+isolent la pondération de la suppression des seuils ; anciens témoins conservés.
+Scores v4 corrigés et sources/poids/availability vérifiés, aucun nouveau
+training, Predict modèle, SQL, API, LLM, ordre ou changement de production.
+Cinq tests passent ; entrées scellées avant simulation. Deux workers, fusions
+en premier. Racine `artifacts/research/us_q051_rank_fusion/20261109-v1/`.
+Résultats 2021–2025, mêmes 4 000 USD initiaux : Q051 fusion **+2,88 % / DD−53,38 % /
+33,59 % gagnants (400/1 191)**, contre témoin per-symbol relatif sur la même
+population, sans seuils : **+121,65 % / DD−32,74 % / 36,66 % (441/1 203)**.
+Avec vol20/régime : fusion **−10,50 % / DD−41,69 % / 34,42 % (284/825)**,
+témoin relatif **+50,91 % / DD−22,00 % / 36,36 % (320/880)**.
+Anciennes références per-symbol avec seuils sur ces mêmes années : Q051
++119,72 %/DD−36,89 %, protégé +60,03 %/DD−24,29 %. La fusion détériore donc
+rendement, DD et taux gagnant dans les deux comparaisons appariées. Pas de
+promotion ni de recherche de poids après observation. Validation terminale PASS :
+empreintes, compteurs des trades/vingt bilans annuels, courbes finales,
+portefeuilles identiques et 6 275 signaux par sélection. Couverture intraday
+incomplète avec secours OHLC daily conservée, résultats exploratoires sans
+holdout inédit. Quatre courbes/imports disponibles, aucun changement de production.
+[Protocole, seuils, contrôles et suivi](q051_fusion_rangs_20261109.md).
+
+## 2026-11-09 — Oracle H10 + LONG per-sector : Q051 et protection vol.20 %/régime
+
+**TERMINÉ — CINQ ANNÉES SCORÉES, DEUX REPLAYS IMPORTÉS ; PER-SECTOR NON PROMU.** GO utilisateur
+confirmant Q051 puis ajout du profil de risque par défaut. Cinq ensembles annuels
+2021–2025 : Oracles Q051 originaux strictement conservés, nouveaux LightGBM LONG
+par secteur GICS, mêmes 24 features et cible SL5/open11, frais 8 pb/opération.
+Fit/calibration purgés avant l’année testée, pas de simple synthèse du rang global.
+TOP10 % Oracle → TOP5 LONG, score >0,50 et AUC du titre sous modèle sectoriel
+sur calibration antérieure ≥0,50 ; aucun remplissage. Millésime de l’année
+précédente également préparé pour reproduire le signal au changement d’année.
+1 788 titres classés dans 11 secteurs, BAR/PHYS sans score ; secteurs actuels
+figés, pas d’historique GICS certifié. Benchmark 2025 absent des anciennes
+archives, reconstitué depuis deux fenêtres dont 1 258 dates OHLC/volume identiques.
+
+Deux nouveaux replays continus à 4 000 USD : Q051, puis Q051 + budget volatilité
+portefeuille20 %/60 séances et régime SPY >98 % SMA200. Plafond achats1×, B4 off,
+entrée journalière sans confirmation, SL5 sans TP/trailing, open11. Comparaison
+annuelle et globale avec per-symbol et sans filtre existants, bornés au même
+31/12/2025. Pas de changement de moteur/production, téléchargement, LLM, ordre ou
+écriture SQL. Trois tests de causalité/mapping/benchmark passent.
+Les 110 modèles v3 sont complets, 15 212 effectifs train/calibration rapprochés.
+Prédictions v3 arrêtées sur `date` pour 2022–2025 : benchmark SPY découpé avec
+un index non réinitialisé, mauvais alignement dates/cours dans les features.
+Les prédictions 2021 également invalidées. Reprise locale v4 avec benchmark
+réindexé, mêmes poids/AUC/Oracles vérifiés, aucun réentraînement ni changement
+du constructeur de features de production. Quatre tests passent, y compris
+invariance d’index, couverture 2022 et contrôle du rendement SPY cinq séances.
+Racine active `artifacts/research/us_q051_per_sector/20261109-v4/` ; deux workers.
+Résultats **2021–2025 uniquement** : Q051 sans filtre +51,30 %, DD −74,62 %,
+gagnants26,22 % ; per-symbol **+119,72 %, DD −36,89 %, gagnants34,51 %** ;
+per-sector **−23,84 %, DD −51,79 %, gagnants31,39 % (124/395)**. Avec vol/régime :
+sans filtre −8,33 %/DD−43,39 %/gagnants31,71 % ; per-symbol **+60,03 %/DD−24,29 %/
+gagnants35,59 %** ; per-sector **−17,87 %/DD−37,12 %/gagnants31,48 % (85/270)**.
+Taux sectoriels Q051 par année : 16,67/19,78/83,33/32,61/40,32 %. Le 83,33 %
+de 2023 ne représente que six sorties, cinq titres entrés en2022 et HCI entré
+Jan3 sur signalDec30 : aucun signal daté2023 retenu. Variante protégée : aucun
+trade2023. Faible utilisation du capital (1 002,66/597,70 USD moyens), pas de
+gain confirmé face au per-symbol. Validation terminale PASS :110 modèles,
+1 697 sélections, dix bilans annuels recomptés ; coverage incomplète conservée.
+Ne pas confondre ce bornage2025 avec le précédent +206,51 % allant jusqu’en2026.
+[Protocole, modèles, contrôles et suivi](q051_oracle_per_sector_20261109.md).
+
+## 2026-11-09 — Q051 : taux gagnant annuel avec/sans per-symbol, recomptage sans nouveau replay
+
+**TERMINÉ — COMPTES ET CONFIGURATIONS VÉRIFIÉS.** Deux replays Q051 continus
+2021–01/10/2026, 4 000 USD, mêmes modèles annuels et configurations de portefeuille
+strictement identiques : SL5/open11, entrée journalière sans confirmation,
+pas de TP/trailing, B4/régime/budget volatilité off, plafond achats 1×.
+TOP10 % Oracle (179) → TOP5 LONG score >0,50/AUC ≥0,50 contre TOP179 brut,
+dans l’ordre Oracle, sans per-symbol. Taux gagnants avec→sans : 2021
+**33,00→22,91 %**, 2022 **28,16→18,84 %**, 2023 **40,35→34,44 %**, 2024
+**36,21→25,59 %**, 2025 **35,44→32,05 %**, 2026 partiel **37,77→29,68 %**.
+Total **432/1 234 =35,01 %** contre **511/1 908 =26,78 %**, écart +8,23 points.
+Rendements +206,51/+166,88 %, DD intraday −36,89/−74,62 %. Taux amélioré six
+années sur six, rendement annuel pas systématiquement supérieur. Trades classés
+par année de sortie, capital et positions transmis sans reset ; frais inclus,
+intérêts de portefeuille non alloués artificiellement aux lots.
+Détail par titre/année exporté, 309/256 sociétés réellement tradées. Moins de
+dix trades signalés, sans sélection de nouvelles valeurs. Largeur/ordre des
+candidats et occupation du capital changent : pas une mesure isolée de l’AUC
+du classifieur. Couverture intraday partielle conservée, aucun nouveau run,
+SQL/API/ordre ou changement de production.
+[Tableaux et fichiers](q051_per_symbol_taux_gagnant_annuel_20261109.md).
+
+## 2026-11-09 — US CALL/PUT + OI : taux gagnants H5/H10/H15/H20 contre témoins
+
+**TERMINÉ — PAS DE GAIN FIABLE CONFIRMÉ, AUCUN CHANGEMENT DE PRODUCTION.**
+Alpaca pour les deux batchs : volume `30Min` dans `stock_option_bars_delayed`
+et OI des métadonnées contrats dans les snapshots `indicative` de
+`stock_option_snapshots`. Yahoo ne complète que les références du sous-jacent.
+SQL US READ ONLY ; TOP10/20/50 avant couverture/labels, filtre de production
+50/50 volume/OI, score >0,50 et moitié supérieure, minimum quatre couverts.
+Trades LONG indépendants à open J+1, SL5, sans TP/trailing, sortie open6/11/16/21,
+frais 8 pb par opération. Ni portefeuille Winner complet ni vente au pic futur.
+
+Archives H20 observables : dix classements, 33 retenus TOP20 sur sept dates,
+mais seulement **14 trades / neuf sociétés / trois dates** mûrs H5 : **0 %**
+après filtre contre **7,89 % (3/38)** des couverts sans filtre et **11,67 %
+(7/60)** du TOP20 brut aux mêmes dates. Sans SL, les 14 restent tous perdants.
+H10/H15/H20 : aucune sélection observable mûre comparable ; pas de taux inventé.
+Modèles originaux supprimés depuis, métadonnées/folds et rangs archivés vérifiés ;
+reproduction actuelle des poids non certifiée.
+
+Complément annuel rétrospectif, modèles entraînés avant 2026 mais scores calculés
+le 8 novembre : TOP20 Oracle H10, couverts→retenus, H5 **53,45→61,54 %**,
+H10 **24,14→11,54 %**, H15/H20 **12,07→3,85 %** (58→26 cas, 14 sociétés/huit dates
+retenues). Oracle H20 : **55,17→68 % / 27,59→20 % / 18,97→8 % / 18,97→8 %**
+(58→25 cas, 12 sociétés/sept dates). Petit indice H5 sur septembre non confirmé
+sur octobre observable, chevauchement très élevé. Pics protégés SL10 et trades
+gagnants après frais conservés séparément. Cinq tests passent, 6 160 sélections
+recontrôlées et 144 cohortes recomptées. Deux exports scellés, aucun API/LLM/fit,
+nouveau Predict, ordre ou SQL write.
+[Protocole, tableaux, TOP10/50 et limites](audit_options_taux_gagnant_20261109.md).
+
+## 2026-11-09 — Volatilité 20 % + régime : profil IHM et cinq extensions
+
+**TERMINÉ — CINQ VARIANTES IMPORTÉES EN IHM, AUCUN ÉCHEC.** Nouveau choix initial
+du menu backtest : « Volatilité 20 % + régime », base Q051 0,50, plafond 1×,
+TOP10 % Oracle → TOP5 LONG, SL5/open11, B4 off. Options de covariance 60 séances
+et régime SPY transmises au moteur natif de replay, avec revalidation native
+après réduction de quantité. Graphique historique Q051/profil protégé/SPY
+accessible par bouton sous « Réappliquer le profil choisi », mesures daily et
+intraday distinctes. Aucun changement de production.
+
+Cinq cas figés, 2021–01/10/2026, 4 000 USD continus, mêmes modèles annuels H10 :
+profil protégé avec plafond 2× ; profil protégé sans per-symbol ; Q051 sans
+per-symbol ; Q088 sans per-symbol ; Q088 sans per-symbol + vol.20 %/régime.
+Sans per-symbol signifie tous les candidats Oracle en ordre d’amplitude :
+TOP10 % pour Q051, TOP20 % pour Q088, sans score LONG/AUC ni TOP5/TOP10.
+Maximum 20 positions, frais et financement conservés. Prix d’origine figés
+inchangés ; extension SQL en lecture seule pour les nouveaux couples titre/date.
+Résultats rendement / DD intraday : protégé plafond 2× **+125,98 % / −24,29 %**,
+strictement identique à la référence protégée plafond 1× ; protégé sans
+per-symbol **−1,33 % / −43,39 %** ; Q051 sans per-symbol **+166,88 % / −74,62 %** ;
+Q088 sans per-symbol **+246,94 % / −58,36 %** ; Q088 sans per-symbol + vol/régime
+**+4,29 % / −39,89 %**. Le retrait du classement change aussi la largeur des
+candidatures admises au risque : ces cas ne mesurent pas l’AUC directionnelle
+du per-symbol isolément. Aucun nouveau cas n’améliore simultanément rendement
+et DD du profil protégé initial. Les cinq bilans natifs restent
+`INCOMPLETE_COVERAGE` (protections daily en secours), distinct de l’absence
+d’échec technique. Graphique capital/DD avec SPY produit et vérifié.
+Coordinateur : `scripts/research/us_winner_vol20_extensions_20261109.py` ;
+tableaux, graphiques et sources des imports IHM sous
+`artifacts/research/us_winner_vol20_extensions/20261109-v1`.
+[Détails et limites](winner_q051_budget_risque_20261109.md).
+
+## 2026-11-09 — Q051 H10 : dimensionnement réduit et budget de volatilité portefeuille
+
+**TERMINÉ — TÉMOIN PASS, TROIS VARIANTES IMPORTÉES EN IHM.** GO utilisateur pour réduire
+le DD du Q051_050 continu à +206,51 % / DD −36,89 %, mêmes modèles/signaux/prix,
+2021–01/10/2026, 4 000 USD. STATIC75 : risque 0,90 %, poids 15 %, cap 0,75×.
+VOL20 : quantité native plafonnée par volatilité prévue du portefeuille 20 %,
+covariance 60 séances connues la veille, positions et ordres en attente inclus.
+REGIME_VOL20 ajoute le filtre SPY >98 % SMA200. Nouvelles entrées seulement,
+aucune liquidation des détenus, SL5/open11 conservés, B4 off. Risque natif
+réappliqué après réduction ; aucun changement du moteur de comptabilité.
+Témoin complet inactif reproduit sur neuf indicateurs avant les trois processus.
+Huit tests passent. STATIC75 +130,01 %, DD daily/intraday −27,39/−27,40 % ; VOL20
++106,82 %, DD −23,40/−24,29 % ; REGIME_VOL20 +125,98 %, mêmes DD, 940 trades et
+36,17 % gagnants, capital final 9 039,00 USD. Les deux budgets atteignent le critère
+DD quotidien pas pire que SPY (−25,36 %), REGIME_VOL20 ayant le meilleur rendement
+de ces deux cas. SPY hors dividendes/frais +103,56 % : pas d'alpha total-return
+certifié. Aucun historique de covariance manquant, couverture intraday incomplète
+conservée. Imports IHM vérifiés, aucun ordre ou fournisseur/SQL write.
+Étude exploratoire, pas de plafond de DD futur garanti.
+[Protocole](winner_q051_budget_risque_20261109.md).
+
+## 2026-11-08 — Consensus EODHD avant résiliation : H5/H10/H20 et dépendances
+
+**TERMINÉ — PAS DE GAIN DIRECTIONNEL DÉMONTRÉ, AUCUNE PROMOTION.** Snapshots réels
+du 11/10 au 07/11 ; 106 067 lignes 0q pertinentes, 1 725 titres parmi 1 790,
+33 875 décisions sur 20 séances. Règles séparées : EPS30 positif, révisions30
+positives, hausse observée du consensus revenus à nombre d'analystes inchangé.
+LONG TP10/SL10, sinon clôture H, frais 16 bps, daily adverse-first : révisions
+positives 55,31 % H5, 60,09 % H10, 58,00 % H20 contre témoins 60,04 %, 65,06 %,
+63,90 %. H20 n'a qu'une date mûre ; revenus aucun H20. Dominance des pics
+révisions : 57,39 % / 60,11 % / 62,04 %, également sous témoins.
+Contrôle TOP10/20/50 via modèle annuel H10 encore présent sur 4 dates seulement :
+TOP20 révisions positives 16,33 % H5 (49 cas), 4,08 % H10 (49), 9,09 % H20 (11),
+sans gain contre témoins. Ancien H20 supprimé, aucune prédiction générée.
+Audit des batchs : EODHD encore configuré pour consensus US/FR, IPO US, cours et
+corporate actions FR, et réseau macro volatilité US derrière SQL. Cours US et
+intraday Alpaca, earnings Finnhub, capitalisation SEC/Finnhub, pas EODHD principal.
+Le consensus n'alimente pas le filtre options actif ; LLM désactivé.
+Snapshots et résultats figés v5, contrôle de 30 chemins et 36 synthèses, 3 tests.
+Réserves de conventions fournisseur, dates corrélées et couverture maintenues.
+Aucun appel fournisseur/LLM, entraînement, ordre, écriture SQL ou configuration
+modifiée. [Bilan et dépendances](eodhd_consensus_utilite_et_dependances_20261108.md).
+
+## 2026-11-08 — Q051 H10 0,50 sans B4 : régime marché ou plafond 2×
+
+**TERMINÉ — DEUX REPLAYS IMPORTÉS EN IHM.** Témoin continu 2021–01/10/2026 à +206,51 %,
+DD −36,89 %, 4 000 USD initiaux. REGIME : seul filtre d'entrée SPY activé, clôture
+précédente > 98 % de SMA200, plafond d'achat 1×, sans B4 ni liquidation forcée.
+Positions détenues protégées par SL5/open11, pas de remplacement des candidats.
+GROSS2 : seul plafond d'achat passe à 2× le capital courant (8 000 USD de capacité
+initiale), margin 2× déjà présent, sans B4 ni filtre régime. Autres paramètres et
+archives identiques : TOP10 % Oracle → TOP5 LONG, score>0,50/AUC≥0,50, SL5/open11,
+risque 1,25 %, poids 20 %, frais et financement inclus. Trois tests du filtre et
+comparaison intégrale des configurations passent. Résultats : REGIME 10 805,53 USD,
++170,14 %, DD −30,44 %, 1 077 trades, 35,28 % gagnants ; GROSS2 13 706,18 USD,
++242,65 %, DD −49,49 %, 1 516 trades, 35,36 % gagnants. Le régime réduit le DD
+de 6,45 points contre 36,37 points de rendement abandonnés ; plafond 2× augmente
+le rendement mais dégrade le DD. Couverture incomplète conservée. Aucun appel
+fournisseur, modèle entraîné, ordre ou écriture SQL. Imports IHM vérifiés.
+[Protocole](winner_q051_regime_plafond2_20261108.md).
+
+## 2026-11-08 — Q051 seuils 0,50 avec B4/DD15, comparaison isolée
+
+**TERMINÉ — IMPORTÉ DANS L'HISTORIQUE IHM.** Reprise exacte du Q051_050 H10 continu à +206,51 %,
+DD −36,89 %, sur 2021–01/10/2026 avec 4 000 USD. Seules différences : contrôleur
+B4/DD15 activé et liquidation partielle 50 % activée. TOP10 % Oracle → TOP5 LONG,
+score>0,50/AUC≥0,50, SL5/open11, entrée quotidienne J+1, risque 1,25 %, poids 20 %,
+plafond d'entrée 1× et capacité margin 2× conservés. Archives et configuration du
+témoin vérifiées ; aucun téléchargement, inférence, ordre ou écriture SQL.
+Résultat : 4 797,17 USD, +19,93 %, DD −28,21 %, 1 290 trades, 36,05 % gagnants,
+capital engagé moyen 2 190,31 USD. Contre +206,51 % / DD −36,89 % pour le témoin :
+DD réduit de 8,69 points, rendement fortement diminué. Même couverture incomplète
+que le témoin, sans plafond garanti à DD15. Import IHM vérifié.
+[Protocole](winner_q051_050_b4_dd15_20261108.md).
+
+## 2026-11-08 — Quatre profils continus H20, six modèles annuels
+
+**TERMINÉ — QUATRE REPLAYS IMPORTÉS DANS L'HISTORIQUE IHM.** Modèles fournis par l'utilisateur,
+fin d'entraînement N−1 pour chaque année d'entrée2021–2026.4 000 USD,
+01/01/2021–01/10/2026, capital/positions conservés entre années.
+Q088 TOP20 %→TOP10 et Q051 TOP10 %→TOP5, chacun en score>0,60/AUC≥0,60
+et score>0,50/AUC≥0,50. SL5 sans TP/trailing, position complète, entrée J+1,
+20 séances puis open21. Q088 plafond2× et B4/DD15 ; Q051 plafond1× et
+contrôleur/liquidation off. Capacité margin2×, risque1,25 %, poids20 %.
+Prévisions2021–2026 finalisées, données qualifiées et témoin annuel H20 IHM2021
+reproduit. Les quatre simulations continues et leurs imports sont terminés sans
+échec : Q051_060 +85,28 % / DD −29,88 % ; Q051_050 +94,36 % / DD −45,58 % ;
+Q088_060 +23,60 % / DD −30,66 % ; Q088_050 −7,14 % / DD −49,24 %.
+Pas de nouvelle formation de modèle ni ordre. Les scores sont persistés par
+ML Predict ; prix SQL/replays en lecture seule. Les limites de couverture restent
+visibles dans les quatre résultats natifs `INCOMPLETE_COVERAGE`.
+[Protocole et modèles](winner_continu_h20_quatre_profils_20261108.md).
+
+## 2026-11-08 — Continu Q051 0,60 et variantes Q051/Q088 0,50
+
+**TERMINÉ — TROIS VARIANTES IMPORTÉES DANS L'HISTORIQUE IHM.** Trois demandes figées : Q051 TOP10 %→TOP5
+LONG score>0,60/AUC≥0,60 ; Q088 TOP20 %→TOP10 score>0,50/AUC≥0,50 ;
+Q051 TOP10 %→TOP5 score>0,50/AUC≥0,50. Même période2021–01/10/2026,
+4 000 USD, six modèles annuels, SL5/open11, position complète et mêmes frais.
+Q051 plafond d'entrée1× et B4/DD/liquidation off ; Q088 plafond2× et contrôleur
+identique au témoin. Capacité du compte margin2× dans les trois cas.
+Prix source v6 conservés ; nouveaux symboles et scores2026 récupérés en SQL
+lecture seule, aucun appel fournisseur, nouvelle inférence ou ordre.
+Reproduction des5 606 candidatures témoins et contrôle Q0512025 avant les replays.
+Import IHM automatique à chaque réussite, résultats et limites conservés.
+Sélections figées : Q051_060 :2 178 candidatures, Q088_050 :13 283,
+Q051_050 :6 073.286 symboles supplémentaires archivés depuis SQL, prix de base
+inchangés. Préparation v2 après normalisation des dates CSV/SQL ;6 tests passent.
+Témoin Q0512025 reproduit :+31,67375 %, DD−18,03995 %, onze indicateurs
+financiers identiques. Q051_060 terminé et importé en IHM :6 361,85 USD,
++59,05 %, DD−25,94 %,551 trades,34,30 % gagnants, capital engagé moyen1 958,05 USD.
+Q051_050 terminé :12 260,32 USD,+206,51 %, DD−36,89 %,1 234 trades,
+35,01 % gagnants, capital engagé moyen5 461,32 USD. Q088_050 terminé :
+4 907,72 USD,+22,69 %, DD−50,37 %,2 525 trades,37,15 % gagnants,
+capital engagé moyen5 463,75 USD. Aucun échec, trois imports IHM confirmés.
+Couverture intraday incomplète conservée ; résultats exploratoires.
+[Protocole et suivi](winner_continu_variantes_q051_q088_20261108.md).
+
+## 2026-11-08 — Qwen local contre GPT et Winner sans LLM, mêmes dossiers 2025
+
+**TERMINÉ — AUCUN FILTRE N'AMÉLIORE LE RENDEMENT DU TÉMOIN.**
+204 candidatures, mêmes contextes et prompt, prix figés ; aucun nouvel appel.
+Qwen : 88 réponses valides, 38 sans news, 78 invalides. Témoin reproduit :
++6,90 %, DD−10,86 %, 27/59 gagnants (45,76 %). Veto Qwen + invalides exclus :
++0,41 %, DD−15,97 %, 19/49 gagnants (38,78 %). GPT équivalent :−0,70 %,
+DD−12,98 %, 21/53 (39,62 %). Favorables Qwen uniquement : 4 signaux, 3 trades,
+0 gagnant,−2,27 %, DD−2,89 %, capital final3 909,34 $. GPT favorable :+2,80 %,
+5/9 gagnants (55,56 %) ; avec preuves suffisantes :+3,80 %,5/8 (62,50 %).
+Le petit nombre de favorables et la forte différence de couverture empêchent
+une conclusion générale sur les modèles. Données rétrospectives non certifiées PIT.
+[Protocole et résultats](qwen_gpt_winner_comparaison_20261108.md).
+
 ## 2026-11-08 — Winner continu 2021–2026, modèles annuels de l'IHM
 
-**TRAITEMENT LANCÉ — PRÉPARATION EN COURS, PAS DE RÉSULTAT.** Demande utilisateur :4 000 USD,
+**TERMINÉ — EXPLORATOIRE, COUVERTURE INTRADAY PARTIELLE.** Demande utilisateur :4 000 USD,
 du01/01/2021 au01/10/2026, six bundles annuels indiqués par les runs IHM,
 sans remise à zéro des positions/capital/DD/B4. SL5/open11, risque1,25 %,
 poids20 %, capacité2×, DD15/B4 avec liquidation50 %, frais et financement
@@ -10,13 +326,33 @@ identiques. L'utilisateur a confirmé TOP20 % Oracle sur toutes les années,
 soit 358 candidats avant TOP10 LONG, y compris en2026. Scores existants, modèles et AUC vérifiés,
 prix SQL en lecture seule, aucun entraînement, téléchargement ou ordre.
 Trois tests de périmètre et calendrier passent.
-Les six sélections sources sont reproduites. Un coordinateur local attend
-les prix figés puis lance le portefeuille continu `uniform20pct`. La demande
+Les six sélections sources sont reproduites. Un coordinateur local a attendu
+les prix figés puis lancé le portefeuille continu `uniform20pct`. La demande
 a été actualisée avant le départ du replay, sans recommencer le gel des prix.
-5 606 candidatures, dont1 078 en2026, avant risque et capital ; aucun résultat
-économique disponible à ce stade.
+5 606 candidatures, dont1 078 en2026, avant risque et capital.
 [Protocole et modèles](winner_continu_modeles_annuels_2021_2026_20261108.md).
-Suivi : `artifacts/research/us_winner_continuous_annual_models/20261108-v2/progress.json`.
+v2 s'est arrêté pour TPB le18/06/2026 : ouverture rejetée avec le volume nul.
+v4 a été relancé depuis2021 avec125 lignes OHLC valides à volume nul ajoutées ;
+toutes les lignes initiales et autres entrées restent identiques. Aucun nouvel
+appel fournisseur, modèle ou ordre. Les anciennes archives restent intactes.
+v4 a ensuite échoué après1 035 séances (14/02/2025), registre de marchés vide
+pendant le suivi d'EGO. Registre désormais validé/archivé une fois puis conservé
+pendant le replay ;67 tests et témoin2025 identique sur18 indicateurs (+6,90 %).
+v6 terminé le08/11/2026 à15h15 Europe/Paris, mêmes prix, signaux et règles.
+Capital final6 186,50 USD, rendement+54,66 %, DD maximal−29,65 %,
+1 254 trades clôturés dont485 gagnants/769 perdants, taux38,68 %.
+Capital engagé moyen3 229,12 USD (57,36 % du capital courant en moyenne),
+maximum15 266,35 USD. Frais1 123,21 USD et financement221,97 USD inclus.
+Capital continu, aucune remise à zéro annuelle. Les rendements par année du même
+portefeuille :2021+7,45 %,2022+0,20 %,2023+24,42 %,2024−0,88 %,2025+11,96 %,2026+4,04 %.
+3 719 couples date/symbole signalent une couverture partielle ; protections OHLC
+daily utilisées selon le contrat. DD15 est un déclencheur de liquidation50 %,
+pas un plafond garanti. Pas de certification PIT complète ni de parité live.
+Bilan : `artifacts/research/us_winner_continuous_annual_models/20261108-v6/continuous-uniform20pct/report.json`.
+Résultat importé dans l'historique IHM sans recalcul, identifiant
+`20261108_continu_2021_2026_v6`, libellé « Continu 2021–2026 — modèles annuels ».
+Courbe, trades, bilan annuel et six modèles accessibles. Badge de couverture
+incomplète conservé ;13 tests et lecture réelle des valeurs par l'IHM vérifiés.
 
 ## 2026-11-08 — GPT : favorables taille5, neutres à taille normale
 
