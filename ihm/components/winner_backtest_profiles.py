@@ -45,7 +45,7 @@ Q051_WIDGETS = {
 }
 
 PROFILE_LABELS = {
-    'q051_vol20_regime': 'Volatilité 20 % + régime (défaut)',
+    'q051_vol20_regime': 'Q051 — Volatilité 20 % + régime (défaut)',
     'q051': 'Q051 — seuils 0,50, plafond de risque 1×',
     'q088': 'Q088 — risque réduit + B4/DD15',
     'production': 'Réglages de production — config.yaml',
