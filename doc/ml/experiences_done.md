@@ -1,5 +1,63 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-09 — TOP5 fusion relative per-symbol/per-sector 50/50
+
+**EXTENSION 2026 TERMINÉE ET IMPORTÉE** après remise du bilan 2021–2025 : mêmes quatre variantes
+continues, jusqu’au 01/10/2026 pour comparaison avec Q051 vol20/régime +125,98 %.
+Oracle/per-symbol annuels archivés inchangés, modèles sectoriels 2026 seuls à
+préparer sur données fin2025, inférence SQL lecture seule avec reproduction
+des scores per-symbol archivés exigée. Capital/positions continus depuis2021.
+Racine neuve `artifacts/research/us_q051_rank_fusion/20261109-v2-2026/`, prérequis
+dans `artifacts/research/us_q051_per_sector/20261109-v5-2026/`. Aucun résultat
+2026 annoncé au lancement, aucune modification de production. Préparation
+terminée :22 modèles sectoriels,31 209 scores per-symbol reproduits exactement,
+sélections2021–2025 identiques aux archives v1 ;1 443 séances/7 215 signaux par
+variante. Quatre replays terminés sans échec de calcul ; validation PASS,
+courbes2021–2025 strictement identiques (écart0), compteurs annuels/globaux et
+capital final rapprochés. Résultats continus2021–01/10/2026 : Q051 fusion
+**+5,26 %/DD−53,38 %/33,02 % gagnants**, témoin relatif sur mêmes candidats
+**+202,67 %/DD−32,74 %/36,71 %** ; avec vol20/régime, fusion
+**−11,78 %/DD−41,69 %/33,44 %**, relatif **+104,00 %/DD−22,00 %/36,49 %**.
+Témoins historiques avec seuils : Q051 **+206,51 %/DD−36,89 %/35,01 %**,
+vol20/régime **+125,98 %/DD−24,29 %/36,17 %**. Fusion50/50 non retenue après
+extension2026 également. Le relatif réduit le DD au prix d’une partie du
+rendement face aux témoins, mais change population et seuils simultanément.
+Quatre imports IHM et graphique disponibles ; couverture intraday incomplète
+avec secours OHLC daily conservée. Aucun changement de production.
+
+**TERMINÉ — QUATRE REPLAYS IMPORTÉS ; FUSION 50/50 NON RETENUE.** GO utilisateur pour
+combiner les deux scores. TOP179 Oracle fixé, population commune de candidats
+ayant deux probabilités causales disponibles ; moyenne 50/50 des percentiles
+de probabilité puis TOP5, égalités par rang Oracle/symbole. Ni seuil absolu
+de probabilité >0,50 ni gate AUC≥0,50 : il s’agit d’une sélection relative,
+pas d’une double confirmation LONG. Cinq candidats réellement sélectionnés
+sur les1 255 séances, 6 275 signaux, minimum83 candidats doublement couverts.
+
+Deux profils : Q051 et vol.20 %/60 séances + régime SPY >98 % SMA200, mêmes
+Oracles annuels2021–2025, 4 000 USD continus, SL5/open11, entrée J+1 sans
+confirmation, pas de TP/trailing, achats1×/capacité margin2×, B4 off, frais et
+financement conservés. Deux témoins ajoutés : TOP5 relatif per-symbol sans
+seuils, sur la même population commune, avec chacun des deux profils. Ils
+isolent la pondération de la suppression des seuils ; anciens témoins conservés.
+Scores v4 corrigés et sources/poids/availability vérifiés, aucun nouveau
+training, Predict modèle, SQL, API, LLM, ordre ou changement de production.
+Cinq tests passent ; entrées scellées avant simulation. Deux workers, fusions
+en premier. Racine `artifacts/research/us_q051_rank_fusion/20261109-v1/`.
+Résultats 2021–2025, mêmes 4 000 USD initiaux : Q051 fusion **+2,88 % / DD−53,38 % /
+33,59 % gagnants (400/1 191)**, contre témoin per-symbol relatif sur la même
+population, sans seuils : **+121,65 % / DD−32,74 % / 36,66 % (441/1 203)**.
+Avec vol20/régime : fusion **−10,50 % / DD−41,69 % / 34,42 % (284/825)**,
+témoin relatif **+50,91 % / DD−22,00 % / 36,36 % (320/880)**.
+Anciennes références per-symbol avec seuils sur ces mêmes années : Q051
++119,72 %/DD−36,89 %, protégé +60,03 %/DD−24,29 %. La fusion détériore donc
+rendement, DD et taux gagnant dans les deux comparaisons appariées. Pas de
+promotion ni de recherche de poids après observation. Validation terminale PASS :
+empreintes, compteurs des trades/vingt bilans annuels, courbes finales,
+portefeuilles identiques et 6 275 signaux par sélection. Couverture intraday
+incomplète avec secours OHLC daily conservée, résultats exploratoires sans
+holdout inédit. Quatre courbes/imports disponibles, aucun changement de production.
+[Protocole, seuils, contrôles et suivi](q051_fusion_rangs_20261109.md).
+
 ## 2026-11-09 — Oracle H10 + LONG per-sector : Q051 et protection vol.20 %/régime
 
 **TERMINÉ — CINQ ANNÉES SCORÉES, DEUX REPLAYS IMPORTÉS ; PER-SECTOR NON PROMU.** GO utilisateur
