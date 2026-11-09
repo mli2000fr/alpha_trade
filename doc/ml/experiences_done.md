@@ -1,5 +1,99 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-09 — Oracle H10 + LONG per-sector : Q051 et protection vol.20 %/régime
+
+**TERMINÉ — CINQ ANNÉES SCORÉES, DEUX REPLAYS IMPORTÉS ; PER-SECTOR NON PROMU.** GO utilisateur
+confirmant Q051 puis ajout du profil de risque par défaut. Cinq ensembles annuels
+2021–2025 : Oracles Q051 originaux strictement conservés, nouveaux LightGBM LONG
+par secteur GICS, mêmes 24 features et cible SL5/open11, frais 8 pb/opération.
+Fit/calibration purgés avant l’année testée, pas de simple synthèse du rang global.
+TOP10 % Oracle → TOP5 LONG, score >0,50 et AUC du titre sous modèle sectoriel
+sur calibration antérieure ≥0,50 ; aucun remplissage. Millésime de l’année
+précédente également préparé pour reproduire le signal au changement d’année.
+1 788 titres classés dans 11 secteurs, BAR/PHYS sans score ; secteurs actuels
+figés, pas d’historique GICS certifié. Benchmark 2025 absent des anciennes
+archives, reconstitué depuis deux fenêtres dont 1 258 dates OHLC/volume identiques.
+
+Deux nouveaux replays continus à 4 000 USD : Q051, puis Q051 + budget volatilité
+portefeuille20 %/60 séances et régime SPY >98 % SMA200. Plafond achats1×, B4 off,
+entrée journalière sans confirmation, SL5 sans TP/trailing, open11. Comparaison
+annuelle et globale avec per-symbol et sans filtre existants, bornés au même
+31/12/2025. Pas de changement de moteur/production, téléchargement, LLM, ordre ou
+écriture SQL. Trois tests de causalité/mapping/benchmark passent.
+Les 110 modèles v3 sont complets, 15 212 effectifs train/calibration rapprochés.
+Prédictions v3 arrêtées sur `date` pour 2022–2025 : benchmark SPY découpé avec
+un index non réinitialisé, mauvais alignement dates/cours dans les features.
+Les prédictions 2021 également invalidées. Reprise locale v4 avec benchmark
+réindexé, mêmes poids/AUC/Oracles vérifiés, aucun réentraînement ni changement
+du constructeur de features de production. Quatre tests passent, y compris
+invariance d’index, couverture 2022 et contrôle du rendement SPY cinq séances.
+Racine active `artifacts/research/us_q051_per_sector/20261109-v4/` ; deux workers.
+Résultats **2021–2025 uniquement** : Q051 sans filtre +51,30 %, DD −74,62 %,
+gagnants26,22 % ; per-symbol **+119,72 %, DD −36,89 %, gagnants34,51 %** ;
+per-sector **−23,84 %, DD −51,79 %, gagnants31,39 % (124/395)**. Avec vol/régime :
+sans filtre −8,33 %/DD−43,39 %/gagnants31,71 % ; per-symbol **+60,03 %/DD−24,29 %/
+gagnants35,59 %** ; per-sector **−17,87 %/DD−37,12 %/gagnants31,48 % (85/270)**.
+Taux sectoriels Q051 par année : 16,67/19,78/83,33/32,61/40,32 %. Le 83,33 %
+de 2023 ne représente que six sorties, cinq titres entrés en2022 et HCI entré
+Jan3 sur signalDec30 : aucun signal daté2023 retenu. Variante protégée : aucun
+trade2023. Faible utilisation du capital (1 002,66/597,70 USD moyens), pas de
+gain confirmé face au per-symbol. Validation terminale PASS :110 modèles,
+1 697 sélections, dix bilans annuels recomptés ; coverage incomplète conservée.
+Ne pas confondre ce bornage2025 avec le précédent +206,51 % allant jusqu’en2026.
+[Protocole, modèles, contrôles et suivi](q051_oracle_per_sector_20261109.md).
+
+## 2026-11-09 — Q051 : taux gagnant annuel avec/sans per-symbol, recomptage sans nouveau replay
+
+**TERMINÉ — COMPTES ET CONFIGURATIONS VÉRIFIÉS.** Deux replays Q051 continus
+2021–01/10/2026, 4 000 USD, mêmes modèles annuels et configurations de portefeuille
+strictement identiques : SL5/open11, entrée journalière sans confirmation,
+pas de TP/trailing, B4/régime/budget volatilité off, plafond achats 1×.
+TOP10 % Oracle (179) → TOP5 LONG score >0,50/AUC ≥0,50 contre TOP179 brut,
+dans l’ordre Oracle, sans per-symbol. Taux gagnants avec→sans : 2021
+**33,00→22,91 %**, 2022 **28,16→18,84 %**, 2023 **40,35→34,44 %**, 2024
+**36,21→25,59 %**, 2025 **35,44→32,05 %**, 2026 partiel **37,77→29,68 %**.
+Total **432/1 234 =35,01 %** contre **511/1 908 =26,78 %**, écart +8,23 points.
+Rendements +206,51/+166,88 %, DD intraday −36,89/−74,62 %. Taux amélioré six
+années sur six, rendement annuel pas systématiquement supérieur. Trades classés
+par année de sortie, capital et positions transmis sans reset ; frais inclus,
+intérêts de portefeuille non alloués artificiellement aux lots.
+Détail par titre/année exporté, 309/256 sociétés réellement tradées. Moins de
+dix trades signalés, sans sélection de nouvelles valeurs. Largeur/ordre des
+candidats et occupation du capital changent : pas une mesure isolée de l’AUC
+du classifieur. Couverture intraday partielle conservée, aucun nouveau run,
+SQL/API/ordre ou changement de production.
+[Tableaux et fichiers](q051_per_symbol_taux_gagnant_annuel_20261109.md).
+
+## 2026-11-09 — US CALL/PUT + OI : taux gagnants H5/H10/H15/H20 contre témoins
+
+**TERMINÉ — PAS DE GAIN FIABLE CONFIRMÉ, AUCUN CHANGEMENT DE PRODUCTION.**
+Alpaca pour les deux batchs : volume `30Min` dans `stock_option_bars_delayed`
+et OI des métadonnées contrats dans les snapshots `indicative` de
+`stock_option_snapshots`. Yahoo ne complète que les références du sous-jacent.
+SQL US READ ONLY ; TOP10/20/50 avant couverture/labels, filtre de production
+50/50 volume/OI, score >0,50 et moitié supérieure, minimum quatre couverts.
+Trades LONG indépendants à open J+1, SL5, sans TP/trailing, sortie open6/11/16/21,
+frais 8 pb par opération. Ni portefeuille Winner complet ni vente au pic futur.
+
+Archives H20 observables : dix classements, 33 retenus TOP20 sur sept dates,
+mais seulement **14 trades / neuf sociétés / trois dates** mûrs H5 : **0 %**
+après filtre contre **7,89 % (3/38)** des couverts sans filtre et **11,67 %
+(7/60)** du TOP20 brut aux mêmes dates. Sans SL, les 14 restent tous perdants.
+H10/H15/H20 : aucune sélection observable mûre comparable ; pas de taux inventé.
+Modèles originaux supprimés depuis, métadonnées/folds et rangs archivés vérifiés ;
+reproduction actuelle des poids non certifiée.
+
+Complément annuel rétrospectif, modèles entraînés avant 2026 mais scores calculés
+le 8 novembre : TOP20 Oracle H10, couverts→retenus, H5 **53,45→61,54 %**,
+H10 **24,14→11,54 %**, H15/H20 **12,07→3,85 %** (58→26 cas, 14 sociétés/huit dates
+retenues). Oracle H20 : **55,17→68 % / 27,59→20 % / 18,97→8 % / 18,97→8 %**
+(58→25 cas, 12 sociétés/sept dates). Petit indice H5 sur septembre non confirmé
+sur octobre observable, chevauchement très élevé. Pics protégés SL10 et trades
+gagnants après frais conservés séparément. Cinq tests passent, 6 160 sélections
+recontrôlées et 144 cohortes recomptées. Deux exports scellés, aucun API/LLM/fit,
+nouveau Predict, ordre ou SQL write.
+[Protocole, tableaux, TOP10/50 et limites](audit_options_taux_gagnant_20261109.md).
+
 ## 2026-11-09 — Volatilité 20 % + régime : profil IHM et cinq extensions
 
 **TERMINÉ — CINQ VARIANTES IMPORTÉES EN IHM, AUCUN ÉCHEC.** Nouveau choix initial
