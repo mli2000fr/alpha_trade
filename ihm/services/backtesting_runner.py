@@ -183,6 +183,11 @@ class BacktestRunOptions:
     winner_policy_overrides: dict[str,object] | None = None
     winner_drawdown_controller_enabled: bool = True  # Existing commands keep their controller; UI sets its own default.
     winner_daily_entry_enabled: bool = False
+    winner_portfolio_vol_target: float | None = None
+    winner_portfolio_vol_lookback: int = 60
+    winner_entry_regime_filter: bool = False
+    winner_entry_regime_sma_window: int = 200
+    winner_entry_regime_bear_threshold: float = -.02
 
     @property
     def ml_first_selection_contract(self) -> MLFirstSelectionContract:
@@ -371,6 +376,16 @@ def build_backtesting_command(
             if type(options.winner_daily_entry_enabled) is not bool:
                 raise ValueError('Winner daily entry: boolean required')
             command.append('--daily-entry' if options.winner_daily_entry_enabled else '--no-daily-entry')
+            if options.winner_portfolio_vol_target is not None or options.winner_entry_regime_filter:
+                if not options.winner_daily_entry_enabled:
+                    raise ValueError('Budget volatilité/régime : activer l’entrée journalière J+1')
+                if options.winner_portfolio_vol_target is not None:
+                    command.extend(['--portfolio-vol-target', str(options.winner_portfolio_vol_target),
+                        '--portfolio-vol-lookback', str(options.winner_portfolio_vol_lookback)])
+                if options.winner_entry_regime_filter:
+                    command.extend(['--entry-regime-filter', '--entry-regime-sma-window',
+                        str(options.winner_entry_regime_sma_window), '--entry-regime-bear-threshold',
+                        str(options.winner_entry_regime_bear_threshold)])
             command.append('--factor-market-cap-check' if options.winner_factor_market_cap_check else '--no-factor-market-cap-check')
             from backtesting.winner_exclusions import excluded_symbols
             excluded=excluded_symbols(options.winner_excluded_symbols)

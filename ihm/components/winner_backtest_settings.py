@@ -10,7 +10,7 @@ GROSS_DEFAULTS_MARKER='bt_winner_gross_default_2_20261105'
 
 
 def initialize_reference_profile():
-    """Migrate open sessions to the requested Q088 defaults once."""
+    """Initialize Q051, migrate the former Q088 default once, preserve later edits."""
     if not st.session_state.get(REFERENCE_DEFAULTS_MARKER):
         for key in ('bt_wp_confirmation','bt_wp_delay','bt_wr_weight','bt_wr_close',
                     'bt_winner_factors','bt_wr_controller_enabled'):
@@ -20,10 +20,16 @@ def initialize_reference_profile():
     if not st.session_state.get(GROSS_DEFAULTS_MARKER):
         st.session_state['bt_wr_gross']=2.
         st.session_state[GROSS_DEFAULTS_MARKER]=True
-    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_q088_defaults
+    from ihm.components.winner_backtest_profiles import (
+        Q088_MARKER, DEFAULT_PROFILE, DEFAULT_PROFILE_MARKER, apply_research_defaults)
     if not st.session_state.get(Q088_MARKER):
-        apply_q088_defaults()
-    return st.session_state.get('bt_winner_settings_profile','q088')
+        apply_research_defaults(DEFAULT_PROFILE)
+    if not st.session_state.get(DEFAULT_PROFILE_MARKER):
+        if st.session_state.get('bt_winner_settings_profile') in ('q088','q051'):
+            reset_execution_settings(DEFAULT_PROFILE)
+            st.session_state['bt_winner_profile_choice'] = DEFAULT_PROFILE
+        st.session_state[DEFAULT_PROFILE_MARKER] = True
+    return st.session_state.get('bt_winner_settings_profile',DEFAULT_PROFILE)
 
 
 def reset_execution_settings(profile='production'):
@@ -35,9 +41,10 @@ def reset_execution_settings(profile='production'):
     st.session_state['bt_winner_settings_profile']=profile
     st.session_state['bt_winner_daily_entry']=profile!='production'
     st.session_state[REFERENCE_DEFAULTS_MARKER]=True
-    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_research_defaults
+    from ihm.components.winner_backtest_profiles import Q088_MARKER,DEFAULT_PROFILE_MARKER,apply_research_defaults
     st.session_state[Q088_MARKER]=True
-    if profile in ('q088','q051'):
+    st.session_state[DEFAULT_PROFILE_MARKER]=True
+    if profile in ('q088','q051','q051_vol20_regime'):
         apply_research_defaults(profile)
 
 
@@ -51,7 +58,7 @@ def render_policy_settings(policy,*,reference_defaults=False,daily_entry_enabled
     with st.container():
         profile=st.session_state.get('bt_winner_settings_profile')
         st.caption((f'Profil {profile.upper()} : SL5 %, sans TP/trailing, H10, position complète, sans confirmation. '
-                    if profile in ('q088','q051') else
+                    if profile in ('q088','q051','q051_vol20_regime') else
                     'Défauts du test de référence : aucune confirmation et aucun délai SIP. '
                     'Les autres protections viennent de config.yaml. ' if reference_defaults else
                     'Valeurs par défaut : section winner_pyramiding de config.yaml. ')+

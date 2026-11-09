@@ -26,8 +26,26 @@ def model_root(artifacts_dir, batch_id):
 
 def load_contract(artifacts_dir, batch_id):
     root = model_root(artifacts_dir, batch_id)
+    required = ('protocol.json', 'feature_profile.json', 'report.json')
+    missing = [name for name in required if not (root/name).is_file()]
+    if missing:
+        state = {}
+        if (root/'progress.json').is_file():
+            try:
+                state = json.loads((root/'progress.json').read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                pass
+        detail = f" Dernier état enregistré : {state.get('status', 'inconnu')}"
+        if state.get('phase'):
+            detail += f" ; phase {state['phase']}"
+        if state.get('completed') is not None and state.get('total') is not None:
+            detail += f" ; {state['completed']}/{state['total']} titres"
+        raise ValueError(f'Modèle Oracle parcours {batch_id} non prêt : fichiers absents '
+                         f"{', '.join(missing)}.{detail}. "
+                         'Terminer ou reprendre l’entraînement avant ML Predict ; '
+                         'aucune prédiction avec un bundle incomplet.')
     protocol, profile, report = [json.loads((root/n).read_text(encoding='utf-8'))
-        for n in ('protocol.json', 'feature_profile.json', 'report.json')]
+        for n in required]
     frozen = {k: v for k, v in protocol.items() if k != 'fingerprint'}
     if protocol.get('fingerprint') != sha256(json.dumps(frozen, sort_keys=True, default=str).encode()).hexdigest():
         raise ValueError('Empreinte du protocole Oracle parcours invalide')

@@ -322,9 +322,13 @@ class ReplayBroker:
             self.close(intent.symbol, parent['remaining'], price, selected_id, reason, parent=raw['parent'])
 
 
+from backtesting.frozen_market_registry import frozen_market_registry
+
+
+@frozen_market_registry
 def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=None,
         sector_map=None, intraday_source=None, research_assumptions=False, progress=None, corporate_actions=None,
-        factor_context_source=None,selection_source=None):
+        factor_context_source=None,selection_source=None,entry_risk_policy=None):
     from backtesting.simulator import BacktestResult
     if not research_assumptions:
         raise ValueError('Winner intraday: historical quotes/sector/CA are not certified. '
@@ -335,6 +339,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         exec_cfg = ExecutionConfig()
     policy = exec_cfg.winner_pyramiding
     daily_entry=getattr(cfg,'winner_daily_entry_enabled',False)
+    if entry_risk_policy is not None and (not daily_entry or policy.reinforcement_enabled):
+        raise ValueError('Portfolio volatility budget requires daily entry without reinforcement')
     availability_offset=observation_offset(policy)
     if not policy.enabled:
         raise ValueError('Explicit enabled campaign replay policy required')
@@ -674,7 +680,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 reduced=(ctx.get('factor_context') or {}).get('market_cap_check_enabled') is False
                 if kind=='DAILY_ENTRY':
                     from backtesting.winner_daily_entry import approve_daily_open
-                    return approve_daily_open(state,version,quantity,snapshot,now,context=ctx)
+                    approve=(entry_risk_policy.wrap(approve_daily_open)
+                        if entry_risk_policy is not None else approve_daily_open)
+                    return approve(state,version,quantity,snapshot,now,context=ctx)
                 return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx,
                     **({'replay_reconstructed_factors':True} if reconstructed else {}),
                     **({'replay_factor_market_cap_disabled':True} if reduced else {}))

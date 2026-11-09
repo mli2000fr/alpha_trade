@@ -358,8 +358,22 @@ def run(args):
             factors = HistoricalFactorSource(conn,pivots['close'],universe=universe,
                 start=prior-timedelta(days=650),end=actual[-1],output=output,market_cap_check=cap_check) if risk.enable_factor_model else None
             options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
+            from backtesting.winner_portfolio_budget import replay_protections
+            portfolio_policy,selection_source=replay_protections(pivots['close'],daily_entry=daily_entry,
+                target=getattr(args,'portfolio_vol_target',None),lookback=getattr(args,'portfolio_vol_lookback',60),
+                regime=getattr(args,'entry_regime_filter',False),
+                sma_window=getattr(args,'entry_regime_sma_window',200),
+                bear_threshold=getattr(args,'entry_regime_bear_threshold',-.02),upstream=options_source)
+            if portfolio_policy is not None and policy.reinforcement_enabled:
+                raise ValueError('Budget volatilité portefeuille : désactiver le renforcement')
             from backtesting.winner_clock import observation_offset
             frozen = dict(arguments=vars(args), winner_policy=asdict(policy), risk=asdict(risk),
+                entry_portfolio_budget=dict(target_annual_vol=getattr(args,'portfolio_vol_target',None),
+                    covariance_sessions=getattr(args,'portfolio_vol_lookback',60),annualization=252,
+                    entry_only=True,held_position_liquidation=False),
+                entry_regime_filter=dict(enabled=getattr(args,'entry_regime_filter',False),
+                    sma_window=getattr(args,'entry_regime_sma_window',200),
+                    bear_threshold=getattr(args,'entry_regime_bear_threshold',-.02),prior_session_only=True),
                 drawdown_controller=controller_snapshot(drawdown_enabled,risk,exec_cfg),
                 initial_entry=dict(mode='DAILY_OPEN_J_PLUS_1' if daily_entry else 'INTRADAY_WINNER',
                     price_source='CANONICAL_DAILY_OPEN' if daily_entry else 'OBSERVED_5M_OPEN',
@@ -416,7 +430,11 @@ def run(args):
                 low=pivots['low'], volume=pivots['volume'], signals_df=selected,
                 sector_map=sectors.set_index('symbol').sector.to_dict(), intraday_source=source,
                 winner_research_assumptions=True, winner_progress=progress, winner_corporate_actions=ca.to_dict('records'),
-                winner_factor_source=factors,winner_selection_source=options_source)
+                winner_factor_source=factors,winner_selection_source=selection_source,
+                winner_entry_risk_policy=portfolio_policy)
+            pd.DataFrame(portfolio_policy.receipts if portfolio_policy else []).to_csv(output/'portfolio-risk-decisions.csv',index=False)
+            regime_receipts=getattr(selection_source,'receipts',[]) if getattr(args,'entry_regime_filter',False) else []
+            pd.DataFrame(regime_receipts).to_csv(output/'regime-decisions.csv',index=False)
             if recovery is not None:
                 recovery.export(output)
                 missing_audit['blocked_entry_dates']=len(recovery.exclusions)
@@ -444,6 +462,11 @@ def run(args):
         result.equity_curve.to_csv(output/'equity-daily.csv')
         result.drawdown_breaker_df.to_csv(output/'risk-5m.csv', index=False)
         report = metrics(result, args.initial_equity)
+        report['entry_portfolio_budget']={**frozen['entry_portfolio_budget'],
+            'decisions':len(portfolio_policy.receipts) if portfolio_policy else 0,
+            'missing_history':sum(r['status']=='UNQUALIFIED_HISTORY' for r in portfolio_policy.receipts) if portfolio_policy else 0}
+        report['entry_regime_filter']={**frozen['entry_regime_filter'],
+            'decisions':len(regime_receipts),'blocked_sessions':sum(not r['entry_allowed'] for r in regime_receipts)}
         if daily_entry:
             resolution=report['protection_resolution']
             table=pd.DataFrame(resolution['sessions'],columns=['date','symbol','reason','evidence',
@@ -591,6 +614,12 @@ def build_parser():
                         help='Replay only: initial purchase at the next official daily open, with native sizing and 5m protections.')
     parser.add_argument('--drawdown-controller',action=argparse.BooleanOptionalAction,default=True,
         help='Replay only: disable DD/daily-loss/B4 controller and associated liquidation; position protections remain active')
+    parser.add_argument('--portfolio-vol-target',type=float,default=None,
+        help='Annual portfolio covariance entry budget, e.g. 0.20; daily J+1 only, no reinforcement')
+    parser.add_argument('--portfolio-vol-lookback',type=int,default=60)
+    parser.add_argument('--entry-regime-filter',action=argparse.BooleanOptionalAction,default=False)
+    parser.add_argument('--entry-regime-sma-window',type=int,default=200)
+    parser.add_argument('--entry-regime-bear-threshold',type=float,default=-.02)
     parser.add_argument('--factor-market-cap-check',action=argparse.BooleanOptionalAction,default=True,
         help='Disable only capitalization/size factor in the replay; market and momentum risk stay active')
     parser.add_argument('--options-filter',action=argparse.BooleanOptionalAction,default=None,
