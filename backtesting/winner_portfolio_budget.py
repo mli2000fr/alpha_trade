@@ -79,7 +79,8 @@ class PortfolioRiskPolicy:
             common=dict(time=str(now),symbol=state['symbol'],native_quantity=native_qty)
             try:
                 decision=portfolio_limit(self.returns,prior_day=prior[-1],positions=context['positions'],
-                    pending=context['pending_entries'],symbol=state['symbol'],price=float(snapshot['daily_open']),
+                    pending=context['pending_entries'],symbol=state['symbol'],price=float(
+                        snapshot['entry_open'] if snapshot.get('price_source')=='OBSERVED_5M_OPEN' else snapshot['daily_open']),
                     equity=float(context['equity']),proposed=native_qty,target=self.target,lookback=self.lookback)
             except ValueError as exc:
                 self.receipts.append(dict(**common,status='UNQUALIFIED_HISTORY',reason=str(exc)))

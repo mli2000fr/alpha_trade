@@ -328,7 +328,7 @@ from backtesting.frozen_market_registry import frozen_market_registry
 @frozen_market_registry
 def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=None,
         sector_map=None, intraday_source=None, research_assumptions=False, progress=None, corporate_actions=None,
-        factor_context_source=None,selection_source=None,entry_risk_policy=None):
+        factor_context_source=None,selection_source=None,entry_risk_policy=None,entry_timing_source=None):
     from backtesting.simulator import BacktestResult
     if not research_assumptions:
         raise ValueError('Winner intraday: historical quotes/sector/CA are not certified. '
@@ -341,6 +341,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     daily_entry=getattr(cfg,'winner_daily_entry_enabled',False)
     if entry_risk_policy is not None and (not daily_entry or policy.reinforcement_enabled):
         raise ValueError('Portfolio volatility budget requires daily entry without reinforcement')
+    if entry_timing_source is not None and (not daily_entry or policy.reinforcement_enabled
+            or policy.confirmation_bars!=0 or policy.trailing_stop_pct is not None or policy.take_profit_pct is not None):
+        raise ValueError('Scheduled replay entry requires daily protection mode, no Winner confirmation/add/trailing')
     availability_offset=observation_offset(policy)
     if not policy.enabled:
         raise ValueError('Explicit enabled campaign replay policy required')
@@ -498,6 +501,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         daily_days = [pd.Timestamp(s.session_date) for s in calendar.sessions(
             prior_day-timedelta(days=150), prior_day) if s.is_open][-61:]
         groups = raw_groups(day, symbols)
+        entry_groups=groups
+        attempted_scheduled=set()
         fallback={}
         if daily_entry:
             from backtesting.winner_daily_protection import prepare_protection_day,opening_prints,tighten_after_daily_close
@@ -651,7 +656,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 fills += [dict(fill_timestamp=t['exit_date'], filled_qty=t['quantity'], avg_fill_price=t['exit_price'],
                     side='sell', intent_role='exit') for t in book.trades if t['symbol'] == candidate]
                 fills.sort(key=lambda f: f['fill_timestamp'])
-                concentration = concentration_allowed(fills, current, candidate, day,'ENTRY' if kind=='DAILY_ENTRY' else kind)
+                concentration = concentration_allowed(fills, current, candidate, day,'ENTRY' if kind in ('DAILY_ENTRY','SCHEDULED_ENTRY') else kind)
                 ctx = dict(account_id=state['account_id'], broker_mode=state['broker_mode'], captured_at=now,
                     equity=book.equity(), available_buying_power=book.capacity(), positions=positions,
                     pending_entries=book.pending_entries(), sector_map=sectors, risk_config=current,
@@ -662,7 +667,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                     concentration_allowed=concentration, corporate_actions_qualified=True,
                     factor_qualified=True, entries_allowed=not exec_cfg.blocks_new_entries)
                 from common.winner_delayed import delayed_entry
-                if kind!='DAILY_ENTRY' and delayed_entry(state,kind):
+                if kind not in ('DAILY_ENTRY','SCHEDULED_ENTRY') and delayed_entry(state,kind):
                     ctx.update(delayed_sip_allowed=True,standard_entry_quote_check_enabled=False)
                 elif snapshot.get('standard_entry_quote_check_enabled') is False:
                     ctx.update(standard_entry_quote_check_enabled=False,
@@ -678,16 +683,16 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                                factor_qualified=context.get('qualified') is True)
                 reconstructed=(ctx.get('factor_context') or {}).get('evidence_kind')=='RECONSTRUCTED_HISTORICAL_INPUTS'
                 reduced=(ctx.get('factor_context') or {}).get('market_cap_check_enabled') is False
-                if kind=='DAILY_ENTRY':
-                    from backtesting.winner_daily_entry import approve_daily_open
-                    approve=(entry_risk_policy.wrap(approve_daily_open)
-                        if entry_risk_policy is not None else approve_daily_open)
+                if kind in ('DAILY_ENTRY','SCHEDULED_ENTRY'):
+                    from backtesting.winner_daily_entry import approve_daily_open,approve_scheduled_open
+                    native=approve_scheduled_open if kind=='SCHEDULED_ENTRY' else approve_daily_open
+                    approve=(entry_risk_policy.wrap(native) if entry_risk_policy is not None else native)
                     return approve(state,version,quantity,snapshot,now,context=ctx)
                 return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx,
                     **({'replay_reconstructed_factors':True} if reconstructed else {}),
                     **({'replay_factor_market_cap_disabled':True} if reduced else {}))
 
-            if daily_entry and offset==0 and not liquidation.blocks_entries:
+            if daily_entry and entry_timing_source is None and offset==0 and not liquidation.blocks_entries:
                 from backtesting.winner_daily_entry import enter_daily_candidates
                 enter_daily_candidates(daily_rows,signal_day=prior_day,day=day,opening=opening,
                     open_df=open_df,book=book,store=store,repo=repo,execution=exec_cfg,
@@ -695,6 +700,38 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                     sector_map=sectors)
                 records=store.rows()
                 fallback_used.update({p['symbol'] for p in book.positions()}&set(fallback))
+            if entry_timing_source is not None and not liquidation.blocks_entries:
+                due=entry_timing_source(prior_day,day,stamp,daily_rows)
+                if set(due)-set(daily_rows.symbol) or set(due)&attempted_scheduled:
+                    raise ValueError('Scheduled entry outside fixed cohort or duplicate attempt')
+                attempted_scheduled.update(due)
+                prices={}
+                for symbol in due:
+                    group=entry_groups.get(symbol)
+                    if group is None or pd.Timestamp(stamp) not in group.index:
+                        coverage.add((str(day),symbol,'SCHEDULED_EXECUTION_5M_OPEN_MISSING'));continue
+                    row=group.loc[pd.Timestamp(stamp)]
+                    if isinstance(row,pd.DataFrame):raise ValueError('Duplicate scheduled opening')
+                    price=float(row['open'])
+                    if not math.isfinite(price) or price<=0:
+                        coverage.add((str(day),symbol,'SCHEDULED_EXECUTION_5M_OPEN_INVALID'));continue
+                    # Compare only two already observed opening prices. Never
+                    # use today's eventual completeness to permit this buy.
+                    initial=group.loc[pd.Timestamp(opening),'open'] if pd.Timestamp(opening) in group.index else None
+                    canonical=float(open_df.loc[pd.Timestamp(day),symbol])
+                    if initial is None or not math.isfinite(canonical) or abs(canonical/float(initial)-1)>.01+1e-12:
+                        coverage.add((str(day),symbol,'SCHEDULED_RAW_DAILY_BASIS_UNQUALIFIED'));continue
+                    prices[symbol]=price
+                if prices:
+                    from backtesting.winner_daily_entry import enter_daily_candidates
+                    rows=daily_rows.loc[daily_rows.symbol.isin(prices)]
+                    enter_daily_candidates(rows,signal_day=prior_day,day=day,opening=stamp,
+                        open_df=pd.DataFrame({s:[p] for s,p in prices.items()},index=[pd.Timestamp(day)]),
+                        book=book,store=store,repo=repo,execution=exec_cfg,risk_config=base_risk,recheck=recheck,
+                        calendar=calendar,coverage=coverage,audit=audit,sector_map=sectors,
+                        _scheduled={s:due[s] for s in prices})
+                    records=store.rows()
+                    fallback_used.update({p['symbol'] for p in book.positions()}&set(fallback))
             if records:
                 # At observed opens, fills/protections/deadlines always run.
                 # Zero-confirmation standard entries retain their original clock.
@@ -794,6 +831,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         price_source='CANONICAL_DAILY_OPEN' if daily_entry else 'OBSERVED_5M_OPEN',
         confirmation_required=not daily_entry and policy.confirmation_bars>0,
         intraday_coverage_required_for_entry=not daily_entry)
+    if entry_timing_source is not None:
+        result.tracker_snapshot['winner_replay']['initial_entry'].update(mode='SCHEDULED_5M_OPEN_AFTER_SIGNAL',
+            price_source='OBSERVED_5M_OPEN',confirmation_required=True,intraday_coverage_required_for_entry=True)
     if daily_entry:
         result.intraday_equity_curve['daily_fallback_positions']=daily_mark_counts
         result.tracker_snapshot['winner_replay']['protection_resolution']=dict(
