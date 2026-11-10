@@ -67,6 +67,14 @@ class WinnerCampaignRuntime:
     def save(self):
         self.version = self.store.save(self.state, self.version)
 
+    def entries_enabled(self):
+        if self.state.get('paper_strategy_profile') is not None:
+            from common.q051_paper import settings, validate_frozen
+            validate_frozen(self.state['paper_strategy_profile'])
+            return (settings()['enabled'] and self.config.broker_mode == self.state['broker_mode'] == 'paper'
+                and self.config.resolved_account_id == self.state['account_id'])
+        return self.config.winner_pyramiding.enabled and not self.config.blocks_new_entries
+
     def pending(self):
         return [o for o in self.state['operations'] if o['status'] in ('RESERVED', 'UNKNOWN', 'SUBMITTED')]
 
@@ -85,7 +93,7 @@ class WinnerCampaignRuntime:
         self.protect()
         self.reconcile_lots()
         if (self.state['policy']['confirmation_bars'] == 0
-                and (not self.config.winner_pyramiding.enabled or self.config.blocks_new_entries
+                and (not self.entries_enabled()
                      or self.now >= aware(self.state['entry_expires_at']))):
             # A queued standard order is still a possible future buy. Disabling
             # entries cancels its remainder, but never discards a raced fill.
@@ -122,7 +130,7 @@ class WinnerCampaignRuntime:
             standard_order_terms)
         standard = standard_initial(self.state)
         if not self.state['lots']:
-            if not self.config.winner_pyramiding.enabled:
+            if not self.entries_enabled():
                 return
             if standard:
                 if not standard_entry_window(self.state, self.now):
@@ -155,7 +163,7 @@ class WinnerCampaignRuntime:
             prior_session_high=snapshot.get('prior_session_high'), price=reference,
             available_cash=snapshot.get('available_cash', float('inf')),
             capacity_quantity=self.state['full_quantity'],
-            new_entries_enabled=self.config.winner_pyramiding.enabled and not self.config.blocks_new_entries)
+            new_entries_enabled=self.entries_enabled())
         if action['action'] not in ('ENTRY_SIGNAL', 'ADD_SIGNAL'):
             return
         kind = 'ENTRY' if action['action'] == 'ENTRY_SIGNAL' else 'ADD'
@@ -179,8 +187,10 @@ class WinnerCampaignRuntime:
             operation = self.state['operations'][-1]
             intent = make_intent(self.state, key, quantity=quantity, order_type=order_type,
                 price=limit if limit is not None else float(self.state['target']['entry_price']),
-                tif='day' if standard and kind == 'ENTRY' else 'ioc',
-                entry_mode='standard' if standard and kind == 'ENTRY' else None)
+                tif=('opg' if self.state.get('paper_strategy_profile') is not None else 'day')
+                    if standard and kind == 'ENTRY' else 'ioc',
+                entry_mode=('q051_moo' if self.state.get('paper_strategy_profile') is not None else 'standard')
+                    if standard and kind == 'ENTRY' else None)
             operation['intent'] = asdict(intent)
             self.state['parents'][intent.intent_id] = dict(action=kind, booked_quantity=0, booked_notional=0.)
             self.save()  # The exact OMS intent survives a crash before HTTP.

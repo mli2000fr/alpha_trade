@@ -281,8 +281,19 @@ class ExecutionConfig:
     time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
     # An explicit frozen value overrides YAML (replay / existing campaigns).
     winner_pyramiding: WinnerPyramidingConfig = field(default_factory=load_winner_pyramiding_config)
+    paper_strategy_profile: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        if self.paper_strategy_profile is not None:
+            from common.q051_paper import validate_frozen
+            from dataclasses import asdict
+            validate_frozen(self.paper_strategy_profile)
+            if self.market_code != 'US_EQ' or self.broker_mode != 'paper':
+                raise ValueError('Profil Q051 exclusivement US PAPER')
+            if (asdict(self.winner_pyramiding) != self.paper_strategy_profile['winner']
+                    or self.account_type != 'margin' or self.entry_order_type != 'market'
+                    or self.entry_mode != 'normal' or self.force_close_on_breaker):
+                raise ValueError('Les réglages Q051 doivent correspondre au profil PAPER figé')
         if not isinstance(self.winner_pyramiding, WinnerPyramidingConfig):
             raise ValueError('winner_pyramiding doit être une WinnerPyramidingConfig validée.')
         if self.winner_pyramiding.enabled:

@@ -32,6 +32,10 @@ class NativeWinnerRisk:
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def __call__(self, state, version, quantity, snapshot, now, kind):
+        if state.get('paper_strategy_profile') is not None:
+            from service.q051_paper.risk import NativeQ051Risk
+            return NativeQ051Risk(self.repo, self.broker, self.config, self.clock)(
+                state, version, quantity, snapshot, now, kind)
         context = self.context_provider(state, snapshot, now, kind)
         decision_time = aware(self.clock())
         return reapprove_campaign(state, version, quantity, snapshot, decision_time, kind, context=context)

@@ -65,7 +65,15 @@ class NativeWinnerBroker:
         self.repo.upsert_execution_order_request_from_intent(intent,
             account_id=state['account_id'], status='NEW')
         try:
-            order = self.broker.submit_intent(intent)
+            if state.get('paper_strategy_profile') is not None:
+                from common.q051_paper import validate_frozen, execution_config
+                from execution_engine.broker_adapter import BrokerAdapter
+                validate_frozen(state['paper_strategy_profile'])
+                if self.config.broker_mode != 'paper' or state['broker_mode'] != 'paper':
+                    raise ValueError('Q051 broker exclusivement PAPER')
+                order = BrokerAdapter(self.client, execution_config(state['account_id'])).submit_intent(intent)
+            else:
+                order = self.broker.submit_intent(intent)
         except BrokerApiError as exc:
             if 400 <= exc.status_code < 500 and exc.status_code != 429 and 'client_order_id' not in str(exc.body):
                 self.repo.upsert_execution_order_request_from_intent(intent,

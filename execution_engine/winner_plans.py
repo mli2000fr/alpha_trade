@@ -51,6 +51,9 @@ def require_current_watcher_code(process):
         ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
     dependencies.append(root.parent/'common'/'winner_pyramiding.py')
     dependencies.append(root.parent/'common'/'winner_delayed.py')
+    dependencies.extend([root.parent/'common'/'q051_paper.py',
+        root.parent/'service'/'q051_paper'/'risk.py', root.parent/'risk_management'/'portfolio_volatility.py'])
+    dependencies.append(root.parent/'config'/'strategies'/'q051_vol20_regime_reference.json')
     if process.create_time() < max(path.stat().st_mtime for path in dependencies):
         raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
 
@@ -131,6 +134,10 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
         state['entry_policy'] = dict(order_type=config.entry_order_type,
             limit_price_buffer_bps=config.limit_price_buffer_bps,
             max_entry_gap_pct=config.max_entry_gap_pct, submission_window=config.submission_window)
+    if config.paper_strategy_profile is not None:
+        from common.q051_paper import validate_frozen
+        state['paper_strategy_profile'] = validate_frozen(config.paper_strategy_profile)
+        state.update(account_id=config.resolved_account_id, broker_mode=config.broker_mode)
     if policy.confirmation_bars == 0:
         from execution_engine.winner_standard_entry import standard_order_terms
         standard_order_terms(state, quote_check_enabled=policy.standard_entry_quote_check_enabled)
@@ -231,6 +238,17 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
     if any(o['status'] in ('RESERVED', 'UNKNOWN', 'SUBMITTED') for o in state['operations']):
         raise ValueError('Unresolved operation; reconcile before retry')
     from execution_engine.winner_standard_entry import standard_initial
+    q051_approval = False
+    if state.get('paper_strategy_profile') is not None:
+        from common.q051_paper import validate_frozen
+        validate_frozen(state['paper_strategy_profile'])
+        q051_approval = (action == 'ENTRY' and state['broker_mode'] == 'paper'
+            and standard_initial(state) and approval.get('price_basis') == 'q051_paper_moo_prior_close'
+            and approval.get('q051_profile_sha256') == state['paper_strategy_profile']['sha256']
+            and approval.get('order_type') == 'market' and approval.get('order_limit_price') is None
+            and approval.get('reference_price_asof') == state['signal_date']
+            and approval.get('realtime_sip_qualified') is False
+            and approval.get('standard_entry_quote_check_enabled') is False)
     no_quote_approval = (action == 'ENTRY' and standard_initial(state)
         and state['policy'].get('standard_entry_quote_check_enabled', True) is False
         and approval.get('standard_entry_quote_check_enabled') is False
@@ -260,7 +278,7 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             or approval.get('state_version') != version
             or approval.get('side') != 'buy'
             or approval.get('entry_data_qualified') is not True
-            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval or delayed_approval)
+            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval or delayed_approval or q051_approval)
             or approval.get('regime_qualified') is not True
             or not approval.get('config_hash') or not approval.get('portfolio_hash')
             or approval.get('qualified') is not True

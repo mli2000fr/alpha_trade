@@ -373,6 +373,8 @@ class PipelineLaunchOptions:
     execution_run_id: str | None = None
     execution_live_approval_token: str | None = None
     execution_run_plan_file: str | None = None
+    q051_paper_enabled: bool = False  # Explicit scheduled strategy, not a global risk override.
+    q051_run_id: str | None = None
     allow_fractional_shares: bool = True
     allow_outside_rth: bool = False
     auto_rebalance: bool = False
@@ -1781,6 +1783,17 @@ def path_directional_options(options: PipelineLaunchOptions) -> PipelineLaunchOp
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    if options.q051_paper_enabled and step_key in ('ml_predict', 'risk_management', 'execution'):
+        if options.execution_mode != 'paper' or not options.q051_run_id or not options.trade_date:
+            raise ValueError('Q051 : PAPER, séance figée et identifiant de sélection requis')
+        batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id
+        if not batch:
+            raise ValueError('Q051 : modèle H10 explicite requis')
+        return [sys.executable, '-u', '-m', 'service.q051_paper.pipeline',
+            '--stage', {'ml_predict':'predict','risk_management':'risk','execution':'execution'}[step_key],
+            '--run-id', options.q051_run_id, '--batch-id', batch,
+            '--trade-date', options.trade_date, '--account', options.account_id or 'default',
+            '--artifacts-dir', options.ml_artifacts_dir]
     options=path_directional_options(options)
     if step_key in ('risk_management', 'execution') and options.allow_fractional_shares:
         from common.winner_pyramiding import load_winner_pyramiding_config

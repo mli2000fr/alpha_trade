@@ -2166,6 +2166,12 @@ def render() -> None:
         render_cn_research_view("pipeline")
         return
 
+    from common.q051_paper import settings as q051_settings
+    if q051_settings()['enabled']:
+        st.info('Batch us_pipeline : Q051 volatilité 20 % + régime activé en PAPER — '
+                'TOP10 % Oracle H10 → jusqu’à 5 LONG per-symbol, SL5 %, sortie après dix séances, '
+                'sans confirmation 5 minutes. Les lancements manuels ci-dessous gardent leurs propres réglages.')
+
     options, live_confirmed = _build_launch_options()
     from ihm.services.pipeline_runner import path_directional_options
     raw_options=options

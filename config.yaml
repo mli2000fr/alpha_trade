@@ -79,6 +79,14 @@ oracle_backtest:
   stop_loss_pct: 0.10
 
 us_pipeline:
+  # Profil PAPER exclusif : TOP10% Oracle H10 -> TOP5 LONG, score>0.50/AUC>=0.50,
+  # SL5/open11, budget covariance 60 séances vol20 + SPY>0.98*SMA200.
+  # Prioritaire sur options/GPT et les presets du risque pour ce batch seulement.
+  # false = retour au parcours antérieur ; les campagnes ouvertes gardent leurs stops.
+  q051_vol20_regime:
+    enabled: true
+    model_batch_id: model-factory-20261107222627-db80b0  # Fin 2025, modèles annuels LONG 2026.
+    artifacts_dir: artifacts/models
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
   # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.

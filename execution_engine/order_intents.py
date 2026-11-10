@@ -858,6 +858,13 @@ def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig |
                     or not is_effectively_integer_quantity(intent.qty) or intent.qty <= 0
                     or intent.side not in ('buy', 'sell')):
                 raise ValueError('Invalid scoped winner campaign order')
+            if (intent.time_in_force == 'opg' and intent.order_type == 'market'
+                    and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
+                    and intent.winner_entry_mode == 'q051_moo' and intent.broker_mode == 'paper'
+                    and config.paper_strategy_profile is not None):
+                from common.q051_paper import validate_frozen
+                validate_frozen(config.paper_strategy_profile)
+                return 'opg'
             if (intent.time_in_force == 'ioc' and intent.order_type == 'limit'
                     and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
                     and intent.limit_price is not None and intent.limit_price > 0):
