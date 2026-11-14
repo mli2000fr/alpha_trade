@@ -85,7 +85,7 @@ us_pipeline:
   # false = retour au parcours antérieur ; les campagnes ouvertes gardent leurs stops.
   q051_vol20_regime:
     enabled: true
-    model_batch_id: model-factory-20261107222627-db80b0  # Fin 2025, modèles annuels LONG 2026.
+    model_batch_id: model-factory-20261114122842-c59bed  # Fin 2026, modèles annuels LONG 2026.
     artifacts_dir: artifacts/models
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
