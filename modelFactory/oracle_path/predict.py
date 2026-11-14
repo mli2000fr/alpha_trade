@@ -188,7 +188,7 @@ def validate_prediction_coverage(features, universe, days, protocol, ratio):
         int(np.ceil(len(universe)*ratio)))
     failures=[]
     for day in days:
-        observed=set(features.loc[features.date.eq(pd.Timestamp(day)),'symbol'])
+        observed=set(features.loc[features.date.eq(pd.Timestamp(day)),'symbol']) & set(universe)
         missing=sorted(set(universe)-observed)
         if missing:
             LOGGER.warning('Couverture Oracle %s : %d/%d (%.2f%%), minimum %d (%.2f%%), absents=%s',
@@ -244,7 +244,7 @@ def write_path_predictions(engine, scores, batch_id, *, horizon=HORIZON):
 
 
 def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artifacts_dir='artifacts/models',
-                                symbols=None, horizon=None, persist_chunk_dates=20):
+                                symbols=None, horizon=None, persist_chunk_dates=20, paper_serving_coverage=None):
     from .directional import enabled
     root, protocol, profile, folds = load_contract(artifacts_dir, batch_id)
     trained_horizon = protocol['horizon']
@@ -264,6 +264,12 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
     sessions = nyse_sessions(pd.Timestamp(start_date).date(), pd.Timestamp(end_date).date())
     if not len(sessions):
         raise ValueError('Aucune séance US demandée')
+    coverage_universe = universe
+    if paper_serving_coverage is not None:
+        from service.q051_paper.coverage import validate
+        if not enabled(protocol) or wanted != set(universe):
+            raise ValueError('Couverture PAPER : bundle et univers complet requis')
+        coverage_universe = validate(paper_serving_coverage, universe, sessions)
     # Preflight the entire range before writing: never use a future first fold.
     schedule = {day: select_fold(day, folds) for day in sessions}
     columns = profile['feature_columns']
@@ -281,7 +287,7 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
         if features.duplicated(['date', 'symbol']).any() or set(chunk)-set(features.date):
             raise ValueError('Séance absente ou clés de features dupliquées')
         if enabled(protocol):
-            validate_prediction_coverage(features,universe,chunk,protocol,coverage_ratio)
+            validate_prediction_coverage(features,coverage_universe,chunk,protocol,coverage_ratio)
         features[columns] = features[columns].replace([np.inf, -np.inf], np.nan).astype(np.float32)
         if features[columns].isna().all(axis=1).any():
             raise ValueError('Ligne de features entièrement manquante')
@@ -317,4 +323,6 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
     return dict(status='completed', batch_id=batch_id, n_rows=persisted, n_dates=len(sessions),
         n_symbols=len(observed), target=protocol['target'], horizon=trained_horizon, directional=enabled(protocol),
         min_prediction_coverage_ratio=coverage_ratio,
+        coverage_scope='model_universe' if paper_serving_coverage is None else paper_serving_coverage['scope'],
+        coverage_universe_count=len(coverage_universe), model_universe_count=len(universe),
         selection_policy='ORACLE_TOP_N_THEN_LONG_TOP_N' if enabled(protocol) else 'AMPLITUDE_ONLY')

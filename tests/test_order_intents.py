@@ -168,6 +168,7 @@ class TestBuildEntryIntents:
         assert blocked[0]["symbol"] == "MSFT"
         assert blocked[0]["reason"] == "regime_max_gross_exposure"
 
+    @pytest.mark.usefixtures('isolated_winner_config')  # This case tests legacy fractions, not whole-share Winner.
     def test_filter_targets_by_live_regime_guards_blocks_fractional_target_when_asset_not_fractionable(self) -> None:
         cfg = ExecutionConfig(allow_fractional_shares=True)
         targets = [_target(shares=0.5)]
@@ -198,6 +199,7 @@ class TestBuildEntryIntents:
         assert blocked[0]["reason"] == "fractional_shares_disabled"
         assert blocked[0]["symbol"] == "AAPL"
 
+    @pytest.mark.usefixtures('isolated_winner_config')
     def test_filter_targets_by_live_regime_guards_keeps_fractional_target_when_asset_fractionable(self) -> None:
         cfg = ExecutionConfig(allow_fractional_shares=True)
         targets = [_target(shares=0.5)]
@@ -211,6 +213,7 @@ class TestBuildEntryIntents:
         assert [target.symbol for target in kept] == ["AAPL"]
         assert blocked == []
 
+    @pytest.mark.usefixtures('isolated_winner_config')
     def test_filter_targets_by_live_regime_guards_blocks_fractional_short_target(self) -> None:
         cfg = ExecutionConfig(allow_fractional_shares=True)
         targets = [ExecutionTarget(
