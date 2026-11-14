@@ -22,6 +22,12 @@ def standard_quote_check_required(state, *, config=None, kind='ENTRY'):
     Legacy campaigns default to checked. ADD and confirmed breakouts always
     require current quotes; this option never changes protections or exits.
     """
+    if state.get('paper_strategy_profile') is not None and kind == 'ENTRY' and standard_initial(state):
+        from common.q051_paper import validate_frozen
+        validate_frozen(state['paper_strategy_profile'])
+        if state['broker_mode'] != 'paper' or config is not None and config.broker_mode != 'paper':
+            raise ValueError('Q051 MOO exclusivement PAPER')
+        return False
     if kind != 'ENTRY' or not standard_initial(state):
         return True
     if state['policy'].get('standard_entry_quote_check_enabled', True) is not False:
@@ -37,6 +43,10 @@ def standard_quote_check_required(state, *, config=None, kind='ENTRY'):
 def standard_entry_window(state, now):
     """Submission window, NOT permission to execute before the next RTH open."""
     now = aware(now)
+    if state.get('paper_strategy_profile') is not None:
+        from common.q051_paper import entry_window, validate_frozen
+        validate_frozen(state['paper_strategy_profile'])
+        return standard_initial(state) and entry_window(state, now)
     if not standard_initial(state) or not aware(state['created_at']) <= now < aware(state['entry_expires_at']):
         return False
     terms = state.get('entry_policy')
@@ -65,6 +75,12 @@ def standard_order_terms(state, *, quote_check_enabled=True):
     a current symmetric gap was observed. An already stricter limit stays so.
     With no gap ceiling, use the frozen standard limit buffer.
     """
+    if state.get('paper_strategy_profile') is not None:
+        from common.q051_paper import validate_frozen
+        validate_frozen(state['paper_strategy_profile'])
+        if state['broker_mode'] != 'paper' or not standard_initial(state) or quote_check_enabled:
+            raise ValueError('Q051 : entrée MOO PAPER explicite requise')
+        return 'market', None
     terms = state.get('entry_policy') or {}
     order_type = terms.get('order_type')
     reference = float(state['target']['entry_price'])

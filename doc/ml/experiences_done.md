@@ -1,5 +1,193 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-14 — Déploiement PAPER de la référence Q051 vol20 + régime
+
+**RACCORDEMENT ACTIVÉ — VALIDATION TECHNIQUE, PAS DE NOUVEAU RENDEMENT.**
+`us_pipeline.q051_vol20_regime.enabled: true` conserve le parcours de référence :
+Oracle H10 TOP10 % du modèle complet → TOP5 LONG per-symbol avant seuils
+score>0,50/AUC≥0,50, sans remplissage, position complète, entrée openJ+1
+sans confirmation, SL5/open11 sans TP/trailing/renforcement. Risque1,25 %,
+poids20 %, achats1×/capacité margin2×, covariance60séances/volatilité20 %,
+SPYJ>98 %SMA200, B4/DD15/facteurs/secteurs/corrélation/options/GPT désactivés
+sur ce parcours seulement. Limites de concentration reprises du RiskConfig
+réellement utilisé par la référence Winner :10entrées/90jours,3pertes puis
+90jours d'exclusion. Aucun preset de capital résolu ; equity, positions et
+ordres ouverts réellement lus pour chaque compte. Les anciennes campagnes
+gardent leur configuration et leurs protections.
+
+Décision utilisateur : seuil93 % sur les membres du modèle actuellement
+activeETtradable chez Alpaca, sans diminuer l'univers1790 ni TOP179. Reçu
+Alpaca frais, PAPER et dernière séance uniquement, listes/empreintes scellées.
+Les prédictions hors périmètre négociable ne gonflent pas le numérateur.
+Le contrôle standard des autres prédictions/backtests n'est pas modifié.
+Lecture actuelle14novembre :1738négociables/1790,52hors dénominateur ;
+1643prédictions couvertes,**94,53 %**, minimum1617. Le dénominateur est dynamique,
+pas une constante1734 provenant du premier audit. Aucun prix ni score inventé.
+
+Prédiction réelle de la séance13novembre terminée avec le modèle
+`model-factory-20261107222627-db80b0` : TOP179 → cinq LONG, **CTVA,ZS,FLEX,IONS,GLW**.
+Sélection `q051-7f930187d5404f26b39e1b5c94a7614e`, archives sous
+`artifacts/q051_paper/` ; scores et traçabilité enregistrés dans les tables
+Oracle canoniques. Contrôle READ ONLY des trois comptes default/test1/test2
+PASS, données J et covariance qualifiées, aucun capital de secours.
+Prévisualisation des quantités également PASS sur les trois comptes :3/3/4titres
+de quantité positive après budget vol20, sans cible ni ordre publié. Reçu
+`artifacts/operations/q051_paper_activation/20261114-sizing-preview/readiness.json`.
+Preuves : `artifacts/operations/q051_paper_activation/20261114-readiness/`
+et `20261114T123259Z-prediction/`. Aucun ordre envoyé ni watcher démarré
+pendant ces vérifications.550tests de régression passent ; vérification
+supplémentaire de l'indépendance vis-à-vis des presets également passée.
+Le batch partage la sélection10 et isole les décisions/claims11/12 par compte,
+vérifie le watcher avant12, conserve SL et échéance depuis les fills réels.
+L'exécution effective dépend encore de l'admission broker et du prix d'ouverture ;
+aucune reproduction du rendement historique n'est annoncée.
+[Contrat opérationnel et commandes de validation](../operations/q051_vol20_regime_paper.md).
+
+## 2026-11-09 — TOP20 % Oracle → A2 → vol20/régime : test économique
+
+**ABANDONNÉ PAR L'UTILISATEUR LE 10 NOVEMBRE — 5/5 REPLAYS, VALIDATION PASS.** Suite à l'audit
+2 452signaux après régime, variante principaleTOP358Oracle→A2, sans per-symbol,
+avec SL5/open11, position complète, vol20/60séances et SPYJ>98 %SMA200.
+Mêmes modèles annuelsH10,4 000USD continus2021–01/10/2026, risque1,25 %,
+poids20 %, achats1×/capacité2×,B4off, pas deTP/trailing/add. Comparaisons sur
+même contexte passé qualifié : openJ+1, attente10h30NY, A2 ; stress25pb sur
+A2 et open contre8pb au primaire.314 028candidats communs,2 835événements A2
+confirmés dont2 452après régime, sans conditionnement sur le futur PnL.
+114tests passent, parité économique cohorte complète/événements seuls avec
+budget actif, lecteurs de prix concordants sur548/574/576symboles de trois
+journées. Correction prouvée d'un mark périmé après entrée tardive sur5m
+partiels : garder le prix récent, branche journalière standard inchangée.
+Référence Q051vol20/régime +125,98 %/DD−24,29 % reprise avec qualification
+précédente et delta de code limité au mark programmé. Prix supplémentaires
+partagés par les nouveaux contrôles ; référence différente d'univers, pas
+une ablation à elle seule. Secours daily adverse après entrée tardive à compter.
+Deux workers au départ, puis quatre à la demande utilisateur ; cinq imports IHM,
+bilans et courbes/SPY consolidés le10novembre à03h23Paris. Reçus initiaux de
+collision de réservation conservés ; aucun doublon de calcul ni échec économique.
+Aucun nouveau modèle, fournisseur, écriture SQL, ordre ou changement de config.
+Racine `artifacts/research/us_a2_top20pct_economic/20261109-v1/`.
+Premier résultat du10novembre : A2 **4 519,04USD/+12,98 %/DD−30,24 %/
+35,19 %gagnants**,824sorties (290/534),831entrées/sept positions ouvertes.
+Capital moyen1 879,46USD (43,41 %équité), maximum4 676,94USD. PnL gagnant/perdant
+moyen+49,93/−26,20USD, détention14,54/5,82jours calendaires. Années :
++15,53/−2,80/+5,64/−8,64/−17,42/+26,22 %. Validation préliminaire PASS : comptes,
+horloges et budget ;29entrées avec borne adverse daily, couverture native
+incomplète maintenue. Import IHM `20261109_a2_20pct_a2_v1`. Inférieur au repère
+Q051per-symbol vol20/régime +125,98 %/DD−24,29 %, avec univers différent.
+Résultats finaux appariés : openJ+1 **+8,19 %/DD−36,30 %/31,06 %gagnants**,
+2 733trades ; attente10h30 **+9,01 %/DD−36,64 %/32,07 %**,2 728trades.
+A2 améliore le rendement de4,78points et le taux gagnant de4,13points contre
+open, avec6,06points de drawdown en moins, mais son gain absolu reste faible.
+Stress25pb/opération : A2 **−15,34 %/DD−44,27 %/35,94 %**,807trades ;
+open **−20,55 %/DD−46,27 %/31,34 %**,2 569trades. A2 reste relativement
+meilleur, sans résistance suffisante aux coûts. Aucun avantage statistique
+indépendant démontré, pas de remplacement de Q051. Validation finale PASS :
+comptes globaux/annuels, horloges causales, budget vol20 et équité finale.
+Couverture intraday incomplète maintenue dans les cinq rapports ; bornes daily
+adverses à l'entrée A2/open/wait/stressA2/stressopen :29/0/194/31/0.
+Tous les résultats et le graphique sont sous la racine ci-dessus ; aucune relance.
+Vérification après abandon :114tests repassés (50,20s),16sources figées encore
+identiques. Le raccordement facultatif `winner_entry_timing_source=None` reste
+inactif dans les appels standards ; seuls les scripts de recherche et les tests
+fournissent ce callback. Aucun raccordement de cette piste au pipeline, watcher
+ou exécution réelle, aucun changement des profils/config de production.
+Le replay Q051 de référence a reproduit à l'octet les six sorties économiques
+archivées ; le correctif ultérieur de mark ne concerne que les entrées
+programmées expérimentales. Aucune régression détectée dans ce périmètre,
+sans garantie générale sur l'ensemble du projet. Code et preuves conservés,
+pas de suppression ni de retour arrière global des modifications partagées.
+[Protocole, contrôles, limites et suivi](a2_top20pct_backtest_20261109.md).
+
+## 2026-11-09 — A2 : élargissement TOP20 % Oracle, fréquence
+
+**AUDIT TERMINÉ — FRÉQUENCE SUFFISANTE EN DIRECT, PAS DE NOUVEAU PNL.** Demande utilisateur après
+rareté sur TOP5 per-symbol. Variante principale : TOP358Oracle (20 % de1 790)
+→A2 sans per-symbol ; comparaison sur mêmes prix avec TOP179direct, ancien
+TOP5per-symbol et TOP358→TOP5per-symbol. Règles A2, seuils, régime, OraclesH10
+annuels et période2021–01/10/2026 inchangés.516 594candidats/1 443séances/
+1 174titres. Archives scellées existantes ; aucun nouvel entraînement,
+API/SQL/ordre ou changement de production. Accélération vectorisée vérifiée
+par neuf tests détecteur, dont parité scalaire201fenêtres ; conservation des
+24anciens signaux exigée à la fin. Compter après régime et sans chevauchement,
+présence des prix distincte d'un vrai achat, pas de promesse de rendement.
+Résultats après régime, mêmes données : ancienTOP5per-symbol22signaux/21titres,
+TOP10 %direct**1 243/366**, TOP20 %direct**2 452/537**, TOP20 %→TOP5per-symbol
+**23/20**. Le retrait du plafonnementTOP5 explique22→1 243 ; le doublement du
+pool direct explique1 243→2 452 (+97,3 %), pas un gain de rendement démontré.
+Principale :314 028contextes qualifiés/516 594 (60,79 %),10 217ranges,
+2 835confirmations,2 452après régime,2 190espacées11séances,2 368avec prix
+qualifié. Par année après régime2021–2026au01/10 :455/181/492/411/450/463.
+878séances avec signal, moyenne1,70sur1 443, maximum22. Gate de fréquence
+passe pour les pools directs, échoue pour lesTOP5. Validation PASS : compteurs
+annuels/candidats et**6 073décisions anciennes identiques** (rejets/couverture/
+ranges/confirmations),24anciens horaires conservés. Aucun PnL/DD ou achat
+A2 mesuré, aucune promotion ;202 566contextes inconnus et84preuves de prix
+non qualifiées parmi les signaux après régime. Le scénario est désormais
+assez fourni pour une comparaison économique exploratoire, pas encore validé.
+Racine `artifacts/research/us_a2_oracle_top20pct/20261109-v1/`.
+[Protocole, contrôles et suivi](a2_oracle_top20pct_frequence_20261109.md).
+
+## 2026-11-09 — Q051 vol20/régime : raccordement A2 range M15, pilote
+
+**RACCORDEMENT TESTÉ — FRÉQUENCE A2 INSUFFISANTE, AUCUN PNL A2.** Hook optionnel
+de simulation pour entrée5m après confirmation M15+930s, prix actuel d'exécution
+et budget vol20/régime revalidés ; pas de changement du flux journalier par défaut,
+ni de live/config.yaml/ordre.109tests passent dont7nouveaux. Mêmes candidats
+Q051/per-symbol annuels2021–01/10/2026,4 000USD continus, SL5/open11,
+pas de TP/trailing/add. Range20M15 figé àJ, impulsion12avant≥2ATR, ATR14,
+largeur0,8–5ATR/deux touches espacées ; rebond haussier sur support àJ+1,
+invalidation si clôture sous borne−tolérance, aucune interpolation/traversée
+de M15 inconnue. Seuils figés avant PnL, pas règles vidéo audio certifiées.
+6 073candidats archivés ; contexte commun déterminé avantJ+1. Gate après régime :
+60signaux/20titres/30nonchevauchants et4années≥5signaux. Si gate passe : témoin
+original reproduit exactement, témoin contexte commun, attente10h30NY, A2 ;
+stress25pb sur commun/A2. Si gate échoue, aucun rendement ni assouplissement.
+Racine `artifacts/research/us_q051_range_support_a2/20261109-v1/`. Couverture5m
+partielle conservée ; secours daily après entrée tardive = borne adverse, creux
+possiblement antérieur à l'achat, à compter explicitement. Aucun résultat
+économique annoncé au lancement. Bilanv1 :20signaux après régime/19titres,
+3 906contextes qualifiés. Reprise de contexte en SQL lecture seule :73 332
+bougies supplémentaires, aucun prix archivé remplacé, règles/seuils inchangés,
+archivesv1 préservées. Racine active `artifacts/research/us_q051_range_support_a2/20261109-v2/`.
+Sur6 073candidats :4 153contextes qualifiés,1 920encore incomplets,97ranges,
+24rebonds,**22après régime sur21titres et22nonchevauchants**. Par année :
+3/1/4/4/5/5. Vingt opens d'exécution avec base daily/raw compatible, EDU/SIRI
+refusés pour base incompatible. Ce ne sont pas20trades exécutés/gagnants.
+Gate60signaux/30nonchevauchants/4années≥5échoue ; pas de backtest économique
+A2 ou de stress, pas de seuil assoupli. Validation compteurs/horloges PASS.
+La reproduction intégrale du témoin Q051vol20/régime est terminée :**courbes
+daily/5m, trades, événements, risque5m et décisions budget identiques à l'octet
+près** ; décisions régime identiques après renommage SMA, configuration identique.
+**9 039,00USD/+125,98 %/DD−24,29 %/340gagnants sur940 (36,17 %)**, pas un PnLA2.
+Faux rejet du validateur mémoire vsCSV, corrigé par comparaison des exports et
+parsing round-trip sans relancer la simulation. Source pré-correction et reçu
+FAILED sans violation préservés ; export postvalidé dans
+v1/reference-postvalidated, propre isolationCOMPLETED, métriques recomputées et
+provenance runtime explicite, import IHM `20261109_a2_baseline_all_v1`.
+**Pilote clos non concluant par manque de fréquence/couverture**, aucune
+promotion A2 ni modification du profil Q051 en production.
+[Raccordement, règles, contrôles, limites et suivi](q051_ranges_m15_a2_test_20261109.md).
+
+## 2026-11-09 — Vidéo ranges M15 : revue de faisabilité Q051 vol20/régime
+
+**REVUE UNIQUEMENT — AUCUN NOUVEAU TEST ÉCONOMIQUE.** Document utilisateur
+`ALPHA_TRADE_SPEC_STRATEGIE_VIDEO.md` lu ; reconstitution non certifiée,
+paramètres proposés et non règles audio attestées. A2 (rebond confirmé au
+support après impulsion) prioritaire, aucun test strictement identique trouvé.
+C2/retest proche deP03, partiels/protection proches deP02/P06 ; B symétrique
+LONG proche deP07 mais autre motif, fréquence à auditer avant PnL. B SHORT ne
+s'intègre pas silencieusement au témoin LONG-only.
+Bougies M15 constructibles depuis trois5m complètes ; couverture à qualifier.
+Budget vol20/régime actuellement limité au daily : vrai raccordement du risque
+à l'entrée intraday nécessaire. OracleJ disponible après clôture, exécution
+J+1 au plus tôt ; intégrer le délai SIP sans fill rétroactif. Protocole conseillé :
+ne changer que l'entrée A2, SL5/open11 et budget20/régime conservés, contrôles
+de couverture et d'attente, pas de TP/partiels/H4 empilés. Document relève
+aussi8h de contexte proposé contre6h30 de séance et ratio inside tautologique
+si bornes max/min de la même fenêtre. Aucun code moteur, configuration, SQL,
+ordre ou nouvel entraînement modifié/lancé.
+[Audit, antécédents et protocole proposé](q051_ranges_m15_video_faisabilite_20261109.md).
+
 ## 2026-11-09 — TOP5 fusion relative per-symbol/per-sector 50/50
 
 **EXTENSION 2026 TERMINÉE ET IMPORTÉE** après remise du bilan 2021–2025 : mêmes quatre variantes

@@ -98,6 +98,8 @@ def ensure_watcher(engine, options, *, directory, stop_event, timeout_seconds=ST
     repo = ExecutionRepository(engine)
     if stop_event.is_set():
         raise RuntimeError('Démarrage watcher annulé avant étape 12')
+    if getattr(options, 'q051_paper_enabled', False):
+        restart_outdated_q051_service(repo, account, directory)
     if healthy_service(repo, account):
         LOGGER.info('Watcher avant étape 12 : service PAPER sain réutilisé compte=%s', account)
         return {'status': 'REUSED_HEALTHY', 'account_id': account, 'broker_mode': 'paper'}
@@ -170,3 +172,49 @@ def ensure_watcher(engine, options, *, directory, stop_event, timeout_seconds=ST
     save()
     LOGGER.info('Watcher avant étape 12 : %s compte=%s', state['status'], account)
     return state
+
+
+def restart_outdated_q051_service(repo, account, directory):
+    """Refresh a verified local PAPER service only between account operations.
+
+    No order/plan/stop is cancelled. The normal startup below must obtain a new
+    healthy heartbeat before step12; failure blocks all new admissions.
+    """
+    existing = find_running_service(account)
+    if existing is None:
+        return
+    from execution_engine.winner_plans import require_current_watcher_code
+    try:
+        require_current_watcher_code(existing)
+        return
+    except ValueError as exc:
+        if 'antérieur' not in str(exc):
+            raise
+    owner = 'qwatch-'+uuid.uuid4().hex[:25]
+    if not repo.acquire_execution_lock(account_id=account, exec_run_id=owner):
+        raise RuntimeError('Mise à jour watcher différée : une opération du compte est active')
+    receipt = dict(account_id=account, pid=existing.pid, status='RESTARTING_OUTDATED_PAPER_WATCHER',
+                   at=datetime.now(UTC).isoformat(), protections_untouched=True)
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory/f'watcher-code-refresh-{account}-{uuid.uuid4().hex[:8]}.json'
+    try:
+        # find_running_service checked exact script path, service scope and
+        # PAPER account; check again under the canonical execution lock.
+        command = existing.cmdline()
+        if not _is_watcher_command(command) or not _compatible(command, account):
+            raise RuntimeError('Identité watcher modifiée ; arrêt refusé')
+        existing.terminate()
+        existing.wait(timeout=15)
+        from execution_engine.watcher_lease import release_dead_local_watcher_lease
+        release_dead_local_watcher_lease(repo.engine, account)
+        receipt['status'] = 'STOPPED_FOR_CODE_REFRESH'
+        LOGGER.info('Watcher PAPER obsolète arrêté entre opérations compte=%s ; redémarrage et heartbeat requis',account)
+    except Exception as exc:
+        receipt.update(status='REFRESH_FAILED',error=str(exc))
+        raise
+    finally:
+        try:
+            path.write_text(json.dumps(receipt,indent=2),encoding='utf-8')
+        finally:
+            repo.release_execution_lock(account_id=account, exec_run_id=owner)

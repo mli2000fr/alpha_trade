@@ -20,8 +20,23 @@ from risk_management.risk_checker import RiskCheckerImpl
 
 def approve_daily_open(state,version,proposed,snapshot,now,*,context):
     """Native portfolio sizing/limits on an opening print, never a quote token."""
-    now=aware(now);price=float(snapshot['daily_open']);cfg=context['risk_config']
-    if (snapshot.get('price_source')!='CANONICAL_DAILY_OPEN' or aware(snapshot['opening_at'])!=now
+    return _approve_open(state,version,proposed,snapshot,now,context=context,scheduled=False)
+
+
+def approve_scheduled_open(state,version,proposed,snapshot,now,*,context):
+    """Same native limits at an observed 5m open, after causal signal availability."""
+    now=aware(now);opening,closing=regular_bounds(now.date())
+    if (not opening<=now<closing or (now-opening).total_seconds()%300
+        or not aware(snapshot['confirmed_at'])<now or not aware(snapshot['available_at'])<=now
+        or aware(snapshot['available_at'])<aware(snapshot['confirmed_at'])):
+        raise ValueError('Scheduled replay entry future/off-grid evidence')
+    return _approve_open(state,version,proposed,snapshot,now,context=context,scheduled=True)
+
+
+def _approve_open(state,version,proposed,snapshot,now,*,context,scheduled):
+    source='OBSERVED_5M_OPEN' if scheduled else 'CANONICAL_DAILY_OPEN'
+    now=aware(now);price=float(snapshot['entry_open'] if scheduled else snapshot['daily_open']);cfg=context['risk_config']
+    if (snapshot.get('price_source')!=source or aware(snapshot['opening_at'])!=now
         or context['account_id']!=state['account_id'] or context['broker_mode']!=state['broker_mode']
         or not 0<=(now-aware(context['captured_at'])).total_seconds()<=60
         or not math.isfinite(price) or price<=0):raise ValueError('Daily-open replay evidence/account unqualified')
@@ -90,16 +105,27 @@ def approve_daily_open(state,version,proposed,snapshot,now,*,context):
         weights[symbol]=quantity*price/cfg.account_equity
         reasons=factor_violations(factor,weights,cfg,candidate=symbol,other_sides=sides)
         if reasons:quantity=0
-    return dict(producer='native_daily_open_replay_risk',price_source='CANONICAL_DAILY_OPEN',
+    return dict(producer='native_scheduled_open_replay_risk' if scheduled else 'native_daily_open_replay_risk',price_source=source,
         max_quantity=quantity,entry_price=price,state_version=version,available_at=now.isoformat(),
         config_hash=cfg.fingerprint,reason='; '.join(reasons) or (checker.get_last_decision_reason() if quantity else 'DAILY_OPEN_BUDGET_OR_CAPACITY'))
 
 
 def enter_daily_candidates(rows,*,signal_day,day,opening,open_df,book,store,repo,
-        execution,risk_config,recheck,calendar,coverage,audit,sector_map):
+        execution,risk_config,recheck,calendar,coverage,audit,sector_map,_scheduled=None):
     """One attempt per ranked candidate, strictly on J's next official session."""
     if calendar.next_session(signal_day)!=day:raise ValueError('Daily entry must be on signal J+1')
-    if aware(opening)!=regular_bounds(day)[0]:raise ValueError('Official daily opening required')
+    if _scheduled is None:
+        if aware(opening)!=regular_bounds(day)[0]:raise ValueError('Official daily opening required')
+    else:
+        start,end=regular_bounds(day)
+        if not start<=aware(opening)<end or (aware(opening)-start).total_seconds()%300:
+            raise ValueError('Scheduled entry requires a regular 5m open')
+        if set(rows.symbol)!=set(_scheduled):raise ValueError('Scheduled entry evidence mismatch')
+        for evidence in _scheduled.values():
+            if (not aware(evidence['confirmed_at'])<aware(opening)
+                or not aware(evidence['available_at'])<=aware(opening)
+                or aware(evidence['available_at'])<aware(evidence['confirmed_at'])):
+                raise ValueError('Scheduled entry future evidence')
     from backtesting.winner_intraday import ReplayBroker
     if not isinstance(book,ReplayBroker):raise ValueError('Daily entry is restricted to the in-memory replay book')
     for row in rows.sort_values('rank' if 'rank' in rows else 'symbol').to_dict('records'):
@@ -123,10 +149,14 @@ def enter_daily_candidates(rows,*,signal_day,day,opening,open_df,book,store,repo
             full*price/current.account_equity,sector,1.,'daily_open_replay_budget',None,
             selection_rank=int(row.get('rank') or 1),risk_budget_dollars=budget,side='long')
         state=plan_from_target(target,execution,'winner-replay',now=opening,calendar=calendar)
+        scheduled=_scheduled is not None
         state.update(account_id=execution.resolved_account_id,broker_mode=execution.broker_mode,
-            risk_run_id=target.risk_run_id,admission='DAILY_OPEN_REPLAY_ONLY',daily_entry_mode=True)
-        snapshot=dict(price_source='CANONICAL_DAILY_OPEN',daily_open=price,opening_at=opening.isoformat())
-        try:approved=recheck(state,0,state['initial_quantity'],snapshot,opening,'DAILY_ENTRY')
+            risk_run_id=target.risk_run_id,admission='SCHEDULED_OPEN_REPLAY_ONLY' if scheduled else 'DAILY_OPEN_REPLAY_ONLY',
+            daily_entry_mode=not scheduled)
+        if scheduled:state['replay_scheduled_entry']=True
+        snapshot=(dict(price_source='OBSERVED_5M_OPEN',entry_open=price,opening_at=opening.isoformat(),**_scheduled[symbol])
+            if scheduled else dict(price_source='CANONICAL_DAILY_OPEN',daily_open=price,opening_at=opening.isoformat()))
+        try:approved=recheck(state,0,state['initial_quantity'],snapshot,opening,'SCHEDULED_ENTRY' if scheduled else 'DAILY_ENTRY')
         except ValueError as exc:
             audit.append(dict(time=opening,symbol=symbol,reason='DAILY_OPEN_RISK_REJECTED: '+str(exc)));continue
         quantity=min(state['initial_quantity'],int(approved['max_quantity']))
@@ -146,7 +176,10 @@ def enter_daily_candidates(rows,*,signal_day,day,opening,open_df,book,store,repo
         raw=book.get(order.broker_order_id)
         for event in reversed(book.events):
             if event.get('event')=='BUY_FILL' and event.get('symbol')==symbol and event.get('time')==opening:
-                event.update(execution_proxy='DAILY_SESSION_OPEN',price_source='CANONICAL_DAILY_OPEN',signal_date=str(signal_day));break
+                event.update(execution_proxy='SCHEDULED_5M_OPEN' if scheduled else 'DAILY_SESSION_OPEN',
+                    price_source='OBSERVED_5M_OPEN' if scheduled else 'CANONICAL_DAILY_OPEN',signal_date=str(signal_day))
+                if scheduled:event.update(_scheduled[symbol])
+                break
         if raw['status']!='filled':
             stored=store.get(state['campaign_id']);stored['state']['status']='CANCELED'
             store.save(stored['state'],stored['version'])
@@ -155,4 +188,6 @@ def enter_daily_candidates(rows,*,signal_day,day,opening,open_df,book,store,repo
             synchronized=WinnerCampaignRuntime(store,repo,book,execution,market=lambda *_:{},risk=lambda *_:{},
                 now=opening,lifecycle_only=True).run([store.get(state['campaign_id'])])
             if synchronized['winner_failures']:raise ValueError('Daily-open protection reconciliation failed: '+str(synchronized))
-        if previous is not None:book.marks[symbol]=previous
+        # A late fill is a newer observed mark than the daily opening carried
+        # by an incomplete-session fallback. Do not restore that stale print.
+        if previous is not None and not scheduled:book.marks[symbol]=previous
