@@ -64,6 +64,19 @@ def test_frozen_profile_matches_reference_and_rejects_live_and_tampering():
         validate_frozen(bad)
 
 
+def test_q051_risk_never_resolves_capital_presets(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail('Le parcours Q051 ne doit pas résoudre un preset capital')
+    monkeypatch.setattr('common.capital_presets.resolve_capital_preset_for_equity', forbidden)
+    monkeypatch.setattr('risk_management.config.RiskConfig.from_preset', forbidden)
+    for equity in (1870., 4000., 55000., 120000.):
+        cfg = risk_config(equity)
+        assert cfg.account_equity == equity
+        assert cfg.risk_per_trade_pct == .0125 and cfg.max_position_weight == .2
+        assert cfg.max_gross_exposure == 1. and cfg.effective_min_notional == 50.
+        assert cfg.effective_max_positions == 20
+
+
 @pytest.mark.parametrize('stamp,allowed', [
     ('2026-10-16T21:00Z',False), ('2026-10-16T23:05Z',True),
     ('2026-10-19T13:27Z',True), ('2026-10-19T13:28Z',False),

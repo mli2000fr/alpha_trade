@@ -1,5 +1,48 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-14 — Déploiement PAPER de la référence Q051 vol20 + régime
+
+**RACCORDEMENT ACTIVÉ — VALIDATION TECHNIQUE, PAS DE NOUVEAU RENDEMENT.**
+`us_pipeline.q051_vol20_regime.enabled: true` conserve le parcours de référence :
+Oracle H10 TOP10 % du modèle complet → TOP5 LONG per-symbol avant seuils
+score>0,50/AUC≥0,50, sans remplissage, position complète, entrée openJ+1
+sans confirmation, SL5/open11 sans TP/trailing/renforcement. Risque1,25 %,
+poids20 %, achats1×/capacité margin2×, covariance60séances/volatilité20 %,
+SPYJ>98 %SMA200, B4/DD15/facteurs/secteurs/corrélation/options/GPT désactivés
+sur ce parcours seulement. Limites de concentration reprises du RiskConfig
+réellement utilisé par la référence Winner :10entrées/90jours,3pertes puis
+90jours d'exclusion. Aucun preset de capital résolu ; equity, positions et
+ordres ouverts réellement lus pour chaque compte. Les anciennes campagnes
+gardent leur configuration et leurs protections.
+
+Décision utilisateur : seuil93 % sur les membres du modèle actuellement
+activeETtradable chez Alpaca, sans diminuer l'univers1790 ni TOP179. Reçu
+Alpaca frais, PAPER et dernière séance uniquement, listes/empreintes scellées.
+Les prédictions hors périmètre négociable ne gonflent pas le numérateur.
+Le contrôle standard des autres prédictions/backtests n'est pas modifié.
+Lecture actuelle14novembre :1738négociables/1790,52hors dénominateur ;
+1643prédictions couvertes,**94,53 %**, minimum1617. Le dénominateur est dynamique,
+pas une constante1734 provenant du premier audit. Aucun prix ni score inventé.
+
+Prédiction réelle de la séance13novembre terminée avec le modèle
+`model-factory-20261107222627-db80b0` : TOP179 → cinq LONG, **CTVA,ZS,FLEX,IONS,GLW**.
+Sélection `q051-7f930187d5404f26b39e1b5c94a7614e`, archives sous
+`artifacts/q051_paper/` ; scores et traçabilité enregistrés dans les tables
+Oracle canoniques. Contrôle READ ONLY des trois comptes default/test1/test2
+PASS, données J et covariance qualifiées, aucun capital de secours.
+Prévisualisation des quantités également PASS sur les trois comptes :3/3/4titres
+de quantité positive après budget vol20, sans cible ni ordre publié. Reçu
+`artifacts/operations/q051_paper_activation/20261114-sizing-preview/readiness.json`.
+Preuves : `artifacts/operations/q051_paper_activation/20261114-readiness/`
+et `20261114T123259Z-prediction/`. Aucun ordre envoyé ni watcher démarré
+pendant ces vérifications.550tests de régression passent ; vérification
+supplémentaire de l'indépendance vis-à-vis des presets également passée.
+Le batch partage la sélection10 et isole les décisions/claims11/12 par compte,
+vérifie le watcher avant12, conserve SL et échéance depuis les fills réels.
+L'exécution effective dépend encore de l'admission broker et du prix d'ouverture ;
+aucune reproduction du rendement historique n'est annoncée.
+[Contrat opérationnel et commandes de validation](../operations/q051_vol20_regime_paper.md).
+
 ## 2026-11-09 — TOP20 % Oracle → A2 → vol20/régime : test économique
 
 **ABANDONNÉ PAR L'UTILISATEUR LE 10 NOVEMBRE — 5/5 REPLAYS, VALIDATION PASS.** Suite à l'audit

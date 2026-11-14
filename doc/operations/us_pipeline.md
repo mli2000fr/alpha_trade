@@ -6,6 +6,15 @@
 
 ## Périmètre
 
+**14 novembre 2026 : parcours Q051 vol20 + régime activé en PAPER.**
+`config.yaml → us_pipeline.q051_vol20_regime.enabled: true` sélectionne le
+parcours dédié des étapes 10/11/12, prioritaire sur options/GPT et indépendant
+des presets de capital. TOP10 % Oracle H10 → TOP5 LONG per-symbol,
+SL5/open11 sans confirmation, volatilité 20 % et régime SPY, sans B4/DD15.
+Le seuil de couverture reste 93 %, sur les membres du modèle déclarés
+négociables par Alpaca ; le classement conserve l'univers complet.
+[Paramètres, comptes, watcher, traçabilité et validation](q051_vol20_regime_paper.md).
+
 **28 octobre 2026 : enchaînement sur les comptes PAPER secondaires.**
 `config.yaml → us_pipeline.run_other_paper_accounts: true` est activé par défaut.
 Le workflow configuré s'exécute d'abord sur `us_pipeline.account_id`, puis, après

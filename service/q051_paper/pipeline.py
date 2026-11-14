@@ -64,7 +64,7 @@ def rank_selection(verified, model_root, universe_size):
     return select_per_symbol(attach_calibration_auc(verified, model_root), config), config
 
 
-def predict(engine, *, run_id, batch, day, artifacts_dir):
+def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
     from modelFactory.oracle_path.predict import predict_oracle_path_history
     from modelFactory.oracle.predictions_store import load_oracle_predictions
     from modelFactory.oracle_path.directional import read_predictions
@@ -72,13 +72,20 @@ def predict(engine, *, run_id, batch, day, artifacts_dir):
     folder.mkdir(parents=True, exist_ok=False)
     write(folder/'started.json', dict(profile=reference(), batch_id=batch, trade_date=day, started_at=datetime.now(UTC)))
     root, protocol = contract(batch, artifacts_dir, day)
+    from service.q051_paper.coverage import capture as capture_coverage
+    _, broker, _ = make_broker(engine, account)
+    coverage, assets = capture_coverage(broker._client, protocol['universe'], account=account, day=day)
+    write(folder/'alpaca_assets.json', assets)
+    write(folder/'coverage.json', coverage)
     predict_oracle_path_history(engine, batch, str(day), str(day), artifacts_dir=artifacts_dir,
-                               symbols=protocol['universe'], horizon=10)
+                               symbols=protocol['universe'], horizon=10, paper_serving_coverage=coverage)
     cutoff = datetime.now(UTC)
     oracle = load_oracle_predictions(engine, batch_id=batch, start_date=str(day), end_date=str(day),
                                      artifacts_dir=artifacts_dir)
     from modelFactory.oracle_path.predict import prediction_coverage_ratio
-    if oracle.symbol.nunique() < math.ceil(len(protocol['universe'])*prediction_coverage_ratio()):
+    covered = set(oracle.symbol) & set(coverage['eligible'])
+    minimum = math.ceil(len(coverage['eligible'])*prediction_coverage_ratio())
+    if len(covered) < minimum:
         raise ValueError('Q051 : couverture Oracle insuffisante')
     verified = read_predictions(engine, root, oracle, batch, cutoff=cutoff)
     ranked, policy = rank_selection(verified, root, len(protocol['universe']))
@@ -87,6 +94,10 @@ def predict(engine, *, run_id, batch, day, artifacts_dir):
     report = dict(status='COMPLETED', stage='predict', strategy_profile=reference()['profile_id'],
         run_id=run_id, batch_id=batch, trade_date=str(day), cutoff=cutoff.isoformat(),
         profile=reference(), policy=asdict(policy), universe_count=len(protocol['universe']),
+        coverage=dict(scope=coverage['scope'], observed=len(covered), denominator=len(coverage['eligible']),
+            ratio=len(covered)/len(coverage['eligible']), minimum=minimum, threshold=prediction_coverage_ratio(),
+            excluded_count=len(coverage['excluded']), receipt_sha256=digest(folder/'coverage.json'),
+            assets_sha256=digest(folder/'alpaca_assets.json')),
         selected=selected.symbol.tolist(), protocol_sha256=digest(root/'protocol.json'),
         directional_manifest_sha256=digest(root/'directional/manifest.json'),
         selection_sha256=digest(folder/'selection.parquet'))
@@ -101,7 +112,7 @@ def qualified(run_id, *, batch, day, artifacts_dir):
     folder = directory(run_id)
     report = json.loads((folder/'selection.json').read_text(encoding='utf-8'))
     seal = json.loads((folder/'seal.json').read_text())
-    root, _ = contract(batch, artifacts_dir, day)
+    root, protocol = contract(batch, artifacts_dir, day)
     validate_frozen(report['profile'])
     if (report['status'] != 'COMPLETED' or report['trade_date'] != str(day) or report['batch_id'] != batch
             or seal['report_sha256'] != digest(folder/'selection.json')
@@ -110,6 +121,14 @@ def qualified(run_id, *, batch, day, artifacts_dir):
             or report['directional_manifest_sha256'] != digest(root/'directional/manifest.json')
             or aware(report['cutoff']) > datetime.now(UTC)):
         raise ValueError('Q051 : sélection incomplète, modifiée ou autre modèle/date')
+    from service.q051_paper.coverage import validate, fingerprint, timestamp
+    coverage = json.loads((folder/'coverage.json').read_text(encoding='utf-8'))
+    assets = json.loads((folder/'alpaca_assets.json').read_text(encoding='utf-8'))
+    if (report['coverage']['receipt_sha256'] != digest(folder/'coverage.json')
+            or report['coverage']['assets_sha256'] != digest(folder/'alpaca_assets.json')
+            or coverage['source_payload_sha256'] != fingerprint(assets)):
+        raise ValueError('Q051 : preuve de couverture modifiée')
+    validate(coverage, protocol['universe'], [day], now=timestamp(coverage['observed_at']))
     return folder, report
 
 
@@ -292,7 +311,8 @@ def main():
         raise ValueError('Q051 exclusivement alpha_trade US')
     day = date.fromisoformat(args.trade_date)
     if args.stage == 'predict':
-        report = predict(engine, run_id=args.run_id, batch=args.batch_id, day=day, artifacts_dir=args.artifacts_dir)
+        report = predict(engine, run_id=args.run_id, batch=args.batch_id, day=day,
+                         artifacts_dir=args.artifacts_dir, account=args.account)
     else:
         folder, selected = qualified(args.run_id, batch=args.batch_id, day=day, artifacts_dir=args.artifacts_dir)
         report = risk(engine, folder, selected, args.account, day) if args.stage == 'risk' else execute(engine, folder, selected, args.account, day)
