@@ -1,5 +1,145 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-15 — Q051 vol20 + régime, sortie H5 contre H10
+
+**TERMINÉ ET VALIDÉ — H5 AUGMENTE LE TAUX GAGNANT MAIS DÉGRADE RENDEMENT/DD.**
+Contrefactuel du témoin annuel causal 2021–1 octobre 2026, 4 000 USD continus,
+mêmes 6 073 signaux TOP10 % Oracle → TOP5 LONG per-symbol, score >0,50 et
+AUC de calibration ≥0,50. Unique différence de configuration : détention
+10 →5 séances, vente open6 au lieu d'open11. Modèles H10 conservés, SL5,
+sans TP/trailing, position complète, entrée openJ+1, budget vol20/cov60 et
+régime, plafond d'achat 1×, B4/DD15 désactivés, frais 8pb par opération.
+Portefeuille entièrement rejoué avec capital libéré par les sorties.
+
+H5 : **6 523,27 USD / +63,08 % / DD −32,17 % / 1 240 trades / 44,27 % gagnants**,
+contre H10 : **9 039,00 USD / +125,98 % / DD −24,29 % / 940 / 36,17 %**.
+Gain moyen gagnant 40,63 contre 64,42 USD, frais 1 247,35 contre 862,12 USD.
+Engagement moyen 39,91 contre 44,76 %. H5 perd 21,42 % en 2025 contre +1,84 %
+au témoin. DD H5 du sommet du 29 novembre 2024 au creux du 20 novembre 2025.
+Les 711 sorties temporelles sont vérifiées à open6, 480 en 5m qualifié et
+231 sur repli journalier. Validation indépendante PASS des frais, du capital,
+du DD et des prix/horaires, 16 tests natifs ciblés passés. Couverture intraday
+partielle identique en méthode au témoin ; résultat exploratoire sur période
+déjà étudiée, aucune configuration de production modifiée. Aucun entraînement,
+nouveau Predict, fournisseur, LLM, SQLwrite ou ordre. Historique IHM
+`20261115_q051_vol20_regime_h5`.
+[Protocole, résultats annuels et limites](q051_vol20_regime_h5_20261115.md).
+
+## 2026-11-15 — CALL/PUT + OI, couverture et direction sur TOP10 % Oracle puis TOP5 LONG
+
+**AUDIT TERMINÉ — PETIT SIGNAL SUR ORACLE H5, AUCUN GAIN ROBUSTE APRÈS TOP5.**
+Piste abandonnée par l'utilisateur le 15 novembre : pas de raccordement du
+filtre options à Q051 ni de nouvelle optimisation de cette piste.
+Univers tradable figé de 1 790 titres : snapshots reçus au moins une fois pour
+1 652 (92,29 %), barres options 30Min pour 1 615 (90,22 %). Score combiné
+qualifié au moins une fois pour 1 024 (57,21 %), moyenne quotidienne 12,21 %
+sur 45 séances ; dernière séance du 13 novembre : 90 (5,03 %) avec lecture
+avant décision ASOF72h, contre zéro avec le lecteur natif. Défaut identifié :
+réception après minuit NY rejetée même avant la décision suivante. Correction
+de qualification isolée à la recherche, production inchangée.
+
+Modèle annuel H10 db80b0, données d'entraînement arrêtées fin 2025 ; classements
+historiques reconstruits en novembre, pas un suivi prospectif. Croisement
+options/rangs sur 23 dates du 14 septembre au 14 octobre ; absence de scores
+de ce batch du 15 octobre au 12 novembre, aucune disponibilité inventée.
+TOP179 Oracle : 848 cas couverts, 397 retenus ; direction dominante pendant
+H5 **50,24 → 55,67 %**, H10 **47,82 → 51,64 %**, AUC **0,561 / 0,567**.
+Trades LONG indépendants SL5, frais 8pb par côté, open6/open11 : taux gagnants
+**42,81 → 46,85 % / 31,72 → 31,99 %** sur dates communes. Pas un rendement
+de portefeuille Winner. TOP5 per-symbol : 36 cas couverts, dix retenus pour
+huit sociétés, AUC **0,500 / 0,533** ; résultats trop petits et sensibles à la
+couverture, taux gagnants retenus inférieurs à ceux des 155 TOP5 complets.
+Contrôles sans chevauchement non concluants après per-symbol. Aucun filtre
+ajouté à Q051. 66 exports bornés/scellés sans troncature, validation indépendante
+PASS, quatre tests ciblés, zéro appel fournisseur/LLM, entraînement, nouvelle
+inférence, écriture SQL ou ordre.
+[Couverture, méthode, comparaisons et limites](options_top10pct_top5_h5_h10_20261115.md).
+
+## 2026-11-15 — Après SL5, retours au-dessus du prix d'achat à H10
+
+**AUDIT DESCRIPTIF TERMINÉ, AUCUNE SUPPRESSION DU SL SIMULÉE.** Q051 vol20/régime
+annuel2021–1octobre2026 : sans TP,139/544stops (25,55 %) sont positifs à la
+clôture H10 ; avec TP20,156/577 (27,04 %). À open11 :148/544 (27,21 %) et
+168/577 (29,12 %). Positif=cours>achat initial, brut, pas simplement>prix du stop.
+Tous les cours d'échéance observés. Pics au-dessus de l'achat à un moment du
+parcours :98,16/98,44 %, incluant les mouvements avant SL et même minimes,
+donc pas un taux de récupération après stop. Sur des séances postérieures au
+jour du stop,49,08/52,34 % repassent l'achat avantH10, borne inférieure excluant
+le jour même. Moyennes H10 de tous les stoppés−4,33/−4,18 %. Ne démontre pas
+qu'ignorer le stop améliore le portefeuille. ValidationPASS1 121trades, prix
+figés complétés uniquement pour les dernières échéances depuis caches de prix
+qualifiés, zéro appel externe/SQLwrite/ordre ou changement de configuration.
+[Détail des définitions, observations et limites](q051_stops_revenus_positifs_h10_20261115.md).
+
+## 2026-11-15 — Q051 vol20 + régime, TP20 contre absence de TP
+
+**TERMINÉ — TP20 N'AMÉLIORE PAS LE COMPROMIS RENDEMENT/DD.** Unique paramètre
+modifié, TP null →20 %. Même référence annuelle
+causale2021–1 octobre2026, 4 000USD continus, TOP179→TOP5 per-symbol avant seuils
+score>.50/AUC≥.50, mêmes6 073signaux, SL5/open11, vol20/cov60/régime, frais8pb.
+Pas de Global, nouveau modèle ou changement des autres contrôles de risque.
+Replay de tout le portefeuille avec réutilisation du capital, pas un plafonnement
+des seules anciennes sorties H10. STOP prioritaire lors de collision SL/TP dans
+une même bougie sans ordre connu. Configuration témoin et seule différenceTP
+vérifiées ;31tests de protection passent. Résultat TP20 : **6 909,46USD /
++72,74 % / DD−21,85 % / 990trades / 35,05 %gagnants**, contre9 039,00USD /
++125,98 % / DD−24,29 % / 940trades / 36,17 %gagnants pour le témoin sans TP.
+77sorties TP dont13gaps plafonnés selon le moteur conservateur ;336sorties
+temporelles et577stops. Engagement moyen43,83 % contre44,76 %. Perte de53,24points
+de rendement pour2,44points de DD en moins. Gains moyens55,77/64,42USD et pertes
+moyennes−25,92/−28,04USD (TP20/témoin). Validation indépendante PASS sur1 443séances,
+frais, comptabilité, configurations, TP réellement exécutés et historique IHM.
+Comparaison exploratoire sur la période déjà auditée, modèles annuels causaux
+mais choix TP20 après observation des pics ; couverture5m partielle conservée.
+Historique `20261115_q051_vol20_regime_tp20`. Aucun changement PAPER ni appel externe.
+[Protocole et suivi](q051_vol20_regime_tp20_20261115.md).
+
+## 2026-11-15 — Diagnostic des sorties H10 de Q051 vol20 + régime
+
+**AUDIT DESCRIPTIF TERMINÉ, PAS UNE NOUVELLE STRATÉGIE.** Référence annuelle
+causale 2021–1 octobre 2026 : 396 sorties open11 sur 940 trades clôturés,
+193 symboles. Rendement net par trade : moyenne **+8,68 %**, médiane **+7,14 %**,
+minimum−5,37 %, maximum+42,11 %. Pic de prix pendant la détention jusqu'à la
+vente : moyenne **+13,83 %**, médiane **+11,63 %**, maximum+46,43 %. Pic strict
+sur les dix séances hors ouverture de vente : moyenne+13,69 %, médiane+11,55 %.
+340/396 gagnants (85,86 %) dans ce groupe conditionné à l'absence de sortie
+sur stop ; ne remplace pas le taux global36,17 % et ne prouve pas l'intérêt
+d'un TP. Même mélange 5m qualifié/repli daily que le replay, aucun cours
+postérieur à la vente utilisé. Source et calendrier vérifiés, P&L réconcilié.
+Zéro SQLwrite, téléchargement, ordre ou changement de configuration.
+[Distributions, ventilation annuelle et méthode](q051_h10_sorties_temporelles_20261115.md).
+
+## 2026-11-15 — Global Ranking H10 dans Q051 vol20 + régime
+
+**TERMINÉ — SIX GLOBAL ANNUELS ENTRAÎNÉS, TROIS REPLAYS, VALIDATION PASS.**
+Comparer le TOP5 per-symbol témoin, le TOP5 Global H10 et la fusion des rangs
+50/50, dans le même TOP10 % Oracle ; seuils per-symbol LONG>0,50 et AUC de
+calibration≥0,50 maintenus après sélection, sans remplissage. Même Q051
+vol20/régime/SL5/open11, capital 4 000 USD continu entre 2021 et le 1 octobre
+2026. Global absent des modèles/scores actuels : six nouveaux LambdaRank H10,
+backend et réglages figés avant test ; validation chronologique passée/purgée.
+Les scores ne sont pas des probabilités de hausse. Résultats :
+
+| Classement | Capital final | Rendement | DD max intraday | Trades / gagnants | Engagement moyen |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Per-symbol témoin | 9 039,00 USD | +125,98 % | −24,29 % | 940 / 36,17 % | 44,76 % |
+| Global H10 | 4 007,43 USD | +0,19 % | −17,70 % | 155 / 30,32 % | 9,95 % |
+| Fusion 50/50 | 8 366,86 USD | +109,17 % | −23,54 % | 674 / 35,31 % | 36,45 % |
+
+**NO-GO pour ajouter ce Global à la référence.** La fusion améliore 2021/2023,
+mais dégrade les quatre autres années. Elle perd 16,80 points de rendement
+pour seulement 0,75 point de DD en moins et réduit le taux gagnant. Le Global
+seul investit beaucoup moins sans avantage économique. Aucun réglage de poids
+recherché après résultats. Témoin reproduit exactement, 16 scores Global absents
+sur 258 297 lignes Oracle sans modifier la sélection du témoin sur cohorte commune.
+Onze tests passent ; causalité des six modèles, comptabilité et parité IHM PASS.
+Modèles hors échantillon en chronologie ; univers contemporain, prix révisés et
+replis OHLC daily gardés comme limites, sans certification PIT/live complète.
+Trois résultats dans l'historique `20261115_q051_global_*`, archives sous
+`artifacts/research/us_q051_global_rank_h10/20261115-v1/`. Zéro appel fournisseur,
+broker ou SQLwrite, aucun changement du pipeline PAPER.
+[Protocole et suivi](q051_global_rank_h10_comparaison_20261115.md).
+
 ## 2026-11-15 — Q051 vol20 + régime, même batch c59bed sur 2021–2026
 
 **TERMINÉ — RÉTROSPECTIF AVEC ANTICIPATION EXPLICITEMENT AUTORISÉE, NON HORS ÉCHANTILLON.**
