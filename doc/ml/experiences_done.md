@@ -1,5 +1,41 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-15 — Q051 vol20/régime, TOP10 LONG ou score LONG >0,60
+
+**TERMINÉ ET VALIDÉ — TOP10 AMÉLIORE RENDEMENT ET DD SUR CETTE PÉRIODE.**
+Même témoin annuel causal 2021–1 octobre 2026, 4 000 USD continus, TOP10 %
+Oracle H10 (179/1 790), AUC de calibration ≥0,50 inchangée. Deux variantes
+indépendantes : TOP10 LONG au lieu de TOP5, ou TOP5 avec score strictement
+>0,60 au lieu de >0,50. Portefeuilles entièrement rejoués ; configurations
+numériques de capital, protections et risque identiques au témoin : SL5/open11,
+position complète, entrée journalière J+1, vol20/cov60/régime, plafond achats1×,
+sans B4/DD15, TP, trailing, confirmation, facteurs, corrélation ou filtre options/GPT.
+
+Sélections reproduites/comptées indépendamment : 6 073 signaux témoin,
+9 890 TOP10, 3 342 score>0,60. Aucun remplissage après rejet. Résultats :
+
+| Variante | Capital final USD | Rendement | DD max intraday | Trades | Gagnants |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Référence TOP5 / >0,50 | 9 039,00 | +125,98 % | −24,29 % | 940 | 36,17 % |
+| TOP10 / >0,50 | 10 035,92 | +150,90 % | −17,58 % | 1 112 | 36,33 % |
+| TOP5 / >0,60 | 8 398,68 | +109,97 % | −20,29 % | 615 | 36,42 % |
+
+Exposition moyenne 44,76 / 45,67 / 33,43 % ; frais 862,12 / 923,44 / 603,23 USD.
+TOP10 gagne 24,92 points de rendement et réduit le DD de 6,71 points, sans
+amélioration importante du taux gagnant. Avantage annuel non uniforme : moins
+bon en 2024, meilleur en 2025–2026. Pas de preuve prospective/robustesse nouvelle.
+Validation indépendante PASS des sélections, configurations, capital, P&L,
+frais, DD et chronologie J+1/open11, 55 tests ciblés passent. Prix/rapports
+figés, pas d'entraînement, nouveau Predict, fournisseur/LLM, SQLwrite, ordre
+ou réglage de production modifié. Limites intraday/secteurs/univers rétrospectif
+du témoin maintenues. Import IHM finalisé séparément après incident de statut,
+sans toucher aux résultats économiques ; reçus d'incident conservés.
+Historiques `20261115_q051_vol20_top10_score050` et
+`20261115_q051_vol20_top5_score060`. Courbe capital/DD, données détaillées et
+ventilations annuelles sous `artifacts/research/us_q051_selection_variants/20261115-v1/`.
+[Fonctionnement détaillé de Q051 et résultats complets](../Q051.md).
+Variables vérifiées : Oracle 173, per-symbol LONG/SHORT 24 par branche.
+
 ## 2026-11-15 — Q051 vol20 + régime, sortie H5 contre H10
 
 **TERMINÉ ET VALIDÉ — H5 AUGMENTE LE TAUX GAGNANT MAIS DÉGRADE RENDEMENT/DD.**
