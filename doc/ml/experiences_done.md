@@ -1,5 +1,43 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-15 — Q051 vol20 + régime, même batch c59bed sur 2021–2026
+
+**TERMINÉ — RÉTROSPECTIF AVEC ANTICIPATION EXPLICITEMENT AUTORISÉE, NON HORS ÉCHANTILLON.**
+Demande utilisateur après constat que `model-factory-20261114122842-c59bed`
+ne possède pas les branches annuelles LONG2021–2024 et que son Oracle causal
+commence en2022. Même dernier fold Oracle et même dernière tête LONG par titre
+sur toute la période2021–13novembre2026, sans réentraînement ni changement de dates.
+Les poids et AUC peuvent être futurs par rapport aux décisions historiques :
+ce biais reste nommé dans les fichiers, le rapport et l'historique IHM.
+TOP179Oracle→TOP5LONG avant seuils score>0,50/AUCcalibration≥0,50, sans remplissage.
+Q051 natif :4 000USD continus, SL5/open11 sans TP/trailing/confirmation/renforcement,
+risque1,25 %, poids20 %, achats1×/capacité margin2×, minimum50USD, vol20/cov60,
+SPYJ>98 %SMA200, B4/DD15/facteurs/secteurs/corrélation/options/GPT désactivés.
+
+**11 630,38USD finaux / +190,76 % / DDintraday−28,04 % / 979trades,
+365gagnants–614perdants / 37,28 %gagnants.** Moyennes gagnant/perdant
++69,43/−29,48USD ; détention14,50/5,36jours calendaires. Engagement moyen
+2 607,40USD (45,49 %equitycourante), maximum8 487,22USD ; frais947,85USD,
+intérêts0. Années2021→2026 :+15,90/−13,03/+28,91/+22,05/+6,43/+72,26 %,
+2026 partiel jusqu'au13novembre, sans remise à zéro annuelle.
+
+Première tentative arrêtée au19octobre2026 sur TKOMY détenu sans cours daily.
+Alpaca SIP bloqué, Yahoo200 :20séances manquantes qualifiées en USD avec7ancrages
+OHLC concordants (écart relatif maximal3,4e−8), aucun split, aucune ligne canonique
+écrasée. Complément local explicite `yahoo_daily_research`, pas du SIP ni une preuve
+PIT ancienne. Scores réutilisés ; simulation entièrement rejouée, pas de suppression
+de position ni de prix inventé. Deux GET de réparation, aucun appel broker ni SQLwrite.
+Statut de couverture incomplète maintenu :19dates Oracle sous93 % et repli OHLCdaily.
+
+Validation finalePASS sur1 474séances, comptes de trades, rendement continu/annuel,
+parité IHM et disclosure d'anticipation ; mêmes poids vérifiés sur2 619 007lignes,
+7 098signaux. Suites initiale16tests et reprise14tests passent. Modèles d'origine,
+contrôles causaux standards et pipeline PAPER inchangés ; aucun score rétrospectif
+non causal injecté dans les tables servables. Historique
+`20261114_q051_c59bed_retrospective`, racine
+`artifacts/research/us_q051_same_batch_retrospective/20261114-v1/`.
+[Protocole, limites, reprise et bilan annuel](q051_c59bed_retrospectif_20261114.md).
+
 ## 2026-11-14 — Déploiement PAPER de la référence Q051 vol20 + régime
 
 **RACCORDEMENT ACTIVÉ — VALIDATION TECHNIQUE, PAS DE NOUVEAU RENDEMENT.**
