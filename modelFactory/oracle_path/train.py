@@ -344,6 +344,8 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     registry = load_security_discontinuities()
     backend=resolve_backend(cfg.oracle_path_backend,enable_catboost=cfg.baseline.enable_catboost)
     training_config=asdict(cfg)
+    if cfg.oracle_path_directional_feature_mode=='compact':
+        training_config.pop('oracle_path_directional_feature_mode',None)
     if not cfg.oracle_path_directional_enabled:
         training_config.pop('oracle_path_directional_enabled',None)  # legacy checkpoint fingerprints
     if cfg.oracle_path_backend is None:
@@ -364,7 +366,10 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if backend=='catboost':protocol.update(catboost_objective='Logloss')
     if cfg.oracle_path_directional_enabled:
         from .directional import settings
-        protocol['directional_contract']=asdict(settings(horizon=horizon))
+        protocol['directional_contract']=asdict(settings(horizon=horizon,
+            feature_mode=cfg.oracle_path_directional_feature_mode))
+        if cfg.oracle_path_directional_feature_mode=='compact':
+            protocol['directional_contract'].pop('feature_mode',None)
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
@@ -447,6 +452,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if len(dataset) != quality["eligible_targets"]:
             raise ValueError("Oracle parcours : features manquantes pour des labels éligibles ; voir quality.json")
         result = fit_folds(dataset, columns, cfg, root, progress)
+        del dataset
         if cfg.oracle_path_directional_enabled:
             from .directional import train as train_directions
             directions=train_directions(cfg,engine,root,progress)
