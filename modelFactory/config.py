@@ -580,6 +580,7 @@ class TrainingConfig:
     oracle_horizon: int = 20
     oracle_path_backend: str | None = None  # None preserves legacy --enable-catboost behaviour.
     oracle_path_directional_enabled: bool = False
+    oracle_path_directional_feature_mode: str = 'compact'  # compact24 | compact_volatility29 (B) | exact Oracle
     oracle_barrier: OracleBarrierConfig = field(default_factory=OracleBarrierConfig)
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
@@ -610,6 +611,10 @@ class TrainingConfig:
                 raise ValueError('Oracle parcours : backend explicite réservé au mode parcours.')
         if self.oracle_path_directional_enabled and (not self.data.oracle_path_model_only or self.oracle_horizon not in (10,15,20)):
             raise ValueError('Bundle parcours LONG/SHORT : Oracle parcours H10, H15 ou H20 requis.')
+        if self.oracle_path_directional_feature_mode not in ('compact','compact_volatility','oracle'):
+            raise ValueError('Features du bundle : compact, compact_volatility ou oracle requis.')
+        if self.oracle_path_directional_feature_mode!='compact' and not self.oracle_path_directional_enabled:
+            raise ValueError('Features Oracle per-symbol : activer le bundle parcours LONG/SHORT.')
         if self.data.oracle_path_model_only:
             if self.data.enable_oracle_model or self.data.oracle_model_only or self.directional_profiles_enabled or self.data.oracle_barrier_model_only:
                 raise ValueError("Oracle parcours et Oracle terminal/bundle sont des modes séparés.")

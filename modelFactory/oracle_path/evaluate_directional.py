@@ -45,6 +45,11 @@ def evaluate(root,*,engine=None,output=None):
             first_successor_date=pd.Timestamp(row['first_successor_date']),reason=row['reason']) for row in rows)
             for symbol,rows in protocol.get('security_discontinuities',{}).items()}
         by_symbol={}
+        full_features=None
+        if manifest['contract'].get('feature_mode','compact')=='oracle':
+            from .directional_features import training_matrix
+            full_features=training_matrix(root)
+        feature_groups=(full_features.groupby('symbol',sort=False).indices if full_features is not None else {})
         for row in manifest['models']:by_symbol.setdefault(row['symbol'],[]).append(row)
         records=[];files=[];seen=set()
         for relative,expected in sorted(manifest['source_hashes'].items()):
@@ -56,7 +61,12 @@ def evaluate(root,*,engine=None,output=None):
                 if symbol in seen:raise ValueError('Duplicate symbol across training chunks')
                 seen.add(symbol)
                 if symbol in by_symbol:
-                    features=d.panels(g,bench,calendar)
+                    if full_features is None:
+                        features=d.panels(g,bench,calendar,feature_mode=manifest['contract'].get('feature_mode','compact'))
+                    else:
+                        from .directional_features import oracle_panels
+                        subset=full_features.iloc[feature_groups[symbol]] if symbol in feature_groups else full_features.iloc[:0]
+                        features=oracle_panels(g,calendar,subset,manifest['features'])
                     panel=features.merge(d.labels(g,calendar,d.Settings(**manifest['contract']),registry.get(symbol,())),
                         on='date',validate='one_to_one')
                     for record in by_symbol[symbol]:

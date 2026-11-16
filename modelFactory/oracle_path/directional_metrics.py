@@ -24,8 +24,9 @@ def classification_metrics(labels, probabilities):
 
 
 def predict(weights,frame):
-    x=frame[INPUTS].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
-    raw=np.clip(named_predict_proba(weights['model'],x,INPUTS)[:,1],1e-6,1-1e-6)
+    columns=weights.get('features',INPUTS)
+    x=frame[columns].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
+    raw=np.clip(named_predict_proba(weights['model'],x,columns)[:,1],1e-6,1-1e-6)
     return weights['calibrator'].predict_proba(np.log(raw/(1-raw)).reshape(-1,1))[:,1]
 
 

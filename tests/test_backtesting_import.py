@@ -53,6 +53,9 @@ def test_import_is_visible_idempotent_and_deletion_keeps_original_archive(archiv
     assert report['summary']['final_value']==pytest.approx(original['final_equity'])
     assert report['summary']['total_trades']==original['closed_lot_trades']
     assert report['run_metadata']['annual_models']=={'2026':{'batch_id':'test'}}
+    if 'daily_protection_fallback_csv' in report['artifacts']:
+        from pathlib import Path
+        assert Path(report['artifacts']['daily_protection_fallback_csv']).is_file()
     assert len(page._load_equity_curve_df(record))==2
     assert import_continuous_winner(source,run_id='import-test',result_subdir=result_subdir)==record
     assert registry.delete_backtesting_runs(['import-test'],stop_active=False)['deleted']==['import-test']
@@ -70,3 +73,18 @@ def test_unfinished_or_changed_sources_are_not_registered(archive):
     report=json.loads((out/'report.json').read_text());report['final_equity']=1.
     write(out/'report.json',report)
     with pytest.raises(ValueError,match='autre archive'):import_continuous_winner(source,run_id='good')
+
+
+def test_authorized_lookahead_remains_explicit_in_history_and_report(archive):
+    source,out,native=archive
+    native.update(lookahead_authorized=True,evaluation_mode='RETROSPECTIVE_LOOKAHEAD_USER_AUTHORIZED',
+                  warning='AVEC ANTICIPATION',limitations=['AVEC ANTICIPATION : aucun test indépendant'])
+    write(out/'report.json',native)
+    plan=json.loads((source/'protocol.json').read_text());plan['lookahead_authorized']=True
+    write(source/'protocol.json',plan)
+    record=import_continuous_winner(source,run_id='biased-test',label='Q051 AVEC ANTICIPATION')
+    report=json.loads((registry.RUNS_DIR/'run'/'biased-test'/'artifacts'/'report.json').read_text(encoding='utf-8'))
+    assert record['lookahead_authorized'] is True and record['independent_holdout'] is False
+    assert report['run_metadata']['lookahead_authorized'] is True
+    assert report['diagnostics']['warning']=='AVEC ANTICIPATION'
+    assert report['limitations']==native['limitations']

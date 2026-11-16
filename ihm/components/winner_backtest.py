@@ -164,6 +164,11 @@ def render_winner_backtest():
     st.caption('Simulation isolée : base en lecture seule, rapports et caches dans son dossier. '
                'Les nouveaux runs peuvent fonctionner en parallèle du pipeline. Les anciens runs gardent leur verrou initial.')
     batch,contract,folds,manifest,directional_bundle,per_symbol_selection=render_model_selection()
+    from ihm.components.winner_backtest_profiles import validate_profile_model
+    try:
+        validate_profile_model(profile,contract,manifest,directional_bundle)
+    except ValueError as exc:
+        st.error(str(exc));st.stop()
     options_config=load_options_filter_config()
     if directional_bundle:
         st.session_state['bt_winner_options_filter']=False
@@ -214,7 +219,7 @@ def render_winner_backtest():
                    'doit être actif sur le compte concerné. En mode '
                    'SIP retardé, les bougies ne sont utilisables qu’après le délai et l’ordre reste '
                    'limité au plafond accepté par le risque. Un cours qui dépasse ce plafond peut ne pas être acheté.')
-    with st.expander('Budget de volatilité du portefeuille et régime SPY',expanded=profile=='q051_vol20_regime'):
+    with st.expander('Budget de volatilité du portefeuille et régime SPY',expanded=profile in ('q051_vol20_regime','q051_vol20_regime_top10')):
         portfolio_vol=st.checkbox('Limiter les nouveaux achats par la volatilité du portefeuille',
             value=False,key='bt_wp_portfolio_vol_enabled')
         vol_target=float(st.number_input('Cible de volatilité annualisée du portefeuille (%)',

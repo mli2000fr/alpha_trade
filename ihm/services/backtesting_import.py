@@ -50,6 +50,14 @@ def import_continuous_winner(source, *, run_id, label='Continu 2021–2026 — m
     # Owned copies: deleting the IHM record must never delete the research source.
     for name in files:shutil.copyfile(output/name,artifacts/('source-report.json' if name=='report.json' else name))
     shutil.copyfile(source/'protocol.json',artifacts/'source-protocol.json')
+    if 'protection_resolution' in native:
+        fallback=output/'daily-protection-fallback.csv'
+        if fallback.is_file():
+            shutil.copyfile(fallback,artifacts/fallback.name)
+        else:
+            pd.DataFrame(native['protection_resolution'].get('sessions',[]),columns=[
+                'date','symbol','reason','evidence','intraday_timing_known','reinforcement_available','entry_excluded'
+            ]).to_csv(artifacts/'daily-protection-fallback.csv',index=False)
     daily=pd.read_csv(artifacts/'equity-daily.csv',index_col=0,parse_dates=True).iloc[:,0]
     trades=pd.read_csv(artifacts/'trades.csv')
     for name in ('entry_date','exit_date'):trades[name]=pd.to_datetime(trades[name],utc=True)
@@ -65,6 +73,13 @@ def import_continuous_winner(source, *, run_id, label='Continu 2021–2026 — m
         'Secteurs actuels et prix révisables ; absence de certification PIT complète et de parité live.',
         'Portefeuille continu : positions, capital et état du risque transmis entre années.',
         'DD15 est un déclencheur de liquidation partielle, pas un plafond garanti.']}
+    if native.get('lookahead_authorized') is True:
+        if plan.get('lookahead_authorized') is not True or not native.get('evaluation_mode'):
+            raise ValueError('Archive rétrospective sans déclaration explicite cohérente')
+        # Do not present authorized in-sample experiments as causal annual models.
+        report['limitations']=list(native.get('limitations') or [])
+        report['run_metadata']=dict(evaluation_mode=native['evaluation_mode'],lookahead_authorized=True,
+                                    independent_holdout=False)
     protocol={**plan['reference'],'observed_at_utc':native['finished_at_utc'],
         'start':plan['start'],'end':plan['end'],'annual_models':plan['annual_models'],
         'annual_reset':False,'source':str(source),'imported_result':True}
@@ -76,6 +91,11 @@ def import_continuous_winner(source, *, run_id, label='Continu 2021–2026 — m
                 raise ValueError('Conversion IHM incohérente : '+a)
         report['run_metadata'].update(imported_result=True,source=str(source),
             annual_models=plan['annual_models'],annual_reset=False)
+        if native.get('lookahead_authorized') is True:
+            report['run_metadata'].update(evaluation_mode=native['evaluation_mode'],
+                                         lookahead_authorized=True,independent_holdout=False)
+            report['diagnostics'].update(evaluation_mode=native['evaluation_mode'],
+                                        warning=native.get('warning'))
         annual=pd.read_csv(artifacts/'annual-summary.csv').astype(object)
         report['annual_summary']=annual.where(pd.notna(annual),None).to_dict('records')
         atomic_json(artifacts/'report.json',report)
@@ -104,6 +124,8 @@ def import_continuous_winner(source, *, run_id, label='Continu 2021–2026 — m
         log_capture='imported_report').to_state()
     record.update(imported_result=True,result_engine='winner_campaign_replay',source_artifacts_dir=str(source),
         start_date=plan['start'],end_date=plan['end'],imported_at_utc=imported)
+    if native.get('lookahead_authorized') is True:
+        record.update(evaluation_mode=native['evaluation_mode'],lookahead_authorized=True,independent_holdout=False)
     for name,sha in hashes.items():
         path=source/'protocol.json' if name=='source-protocol.json' else output/name
         if digest(path)!=sha:raise ValueError('Source modifiée pendant l’import : '+name)

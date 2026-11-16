@@ -76,19 +76,48 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     at.run(timeout=30)
     assert not at.exception
     initial=at.session_state['result']
-    assert at.selectbox(key='bt_winner_profile_choice').value=='q051_vol20_regime'
-    assert initial['winner_top_n']==179 and initial['winner_per_symbol_top_long']==5
+    assert at.selectbox(key='bt_winner_profile_choice').value=='q051_top10'
+    assert initial['winner_top_n']==179 and initial['winner_per_symbol_top_long']==10
     assert initial['winner_per_symbol_min_long_probability']==.5
     assert initial['winner_per_symbol_min_long_auc']==.5
-    assert initial['winner_portfolio_vol_target']==.20
-    assert initial['winner_entry_regime_filter']
+    assert initial['winner_portfolio_vol_target'] is None
+    assert not initial['winner_entry_regime_filter']
     parsed_initial=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**initial))[4:])
-    assert parsed_initial.portfolio_vol_target==.20 and parsed_initial.entry_regime_filter
+    assert parsed_initial.portfolio_vol_target is None and not parsed_initial.entry_regime_filter
+    assert parsed_initial.per_symbol_top_long==10
     assert not initial['winner_drawdown_controller_enabled']
     assert at.number_input(key='bt_wr_gross').value==1.
     at.button(key='bt_winner_profile_comparison').click().run(timeout=30)
     assert not at.exception
     assert len(at.dataframe)>=1
+    assert at.get('imgs')
+    assert len(at.dataframe[0].value)==7
+
+    # Both new choices must reach the command, then reapply after manual edits.
+    at.selectbox(key='bt_winner_profile_choice').select('q051_vol20_regime_top10').run(timeout=30)
+    protected=at.session_state['result']
+    assert protected['winner_top_n']==179 and protected['winner_per_symbol_top_long']==10
+    assert protected['winner_portfolio_vol_target']==.20 and protected['winner_entry_regime_filter']
+    assert protected['winner_per_symbol_min_long_auc']==.5
+    protected_args=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**protected))[4:])
+    assert protected_args.per_symbol_top_long==10 and protected_args.portfolio_vol_target==.20
+    assert protected_args.entry_regime_filter and not protected_args.drawdown_controller
+    at.number_input(key=f'bt_per_symbol_top_long_{batch}').set_value(3).run(timeout=30)
+    at.number_input(key='bt_wp_portfolio_vol_target').set_value(30.).run(timeout=30)
+    at.button(key='bt_winner_profile_reload').click().run(timeout=30)
+    assert not at.exception
+    assert at.session_state['result']['winner_per_symbol_top_long']==10
+    assert at.session_state['result']['winner_portfolio_vol_target']==.20
+    at.selectbox(key='bt_winner_profile_choice').select('q051_top10').run(timeout=30)
+    assert not at.exception
+    assert at.session_state['result']['winner_portfolio_vol_target'] is None
+    assert not at.session_state['result']['winner_entry_regime_filter']
+    at.number_input(key=f'bt_per_symbol_top_long_{batch}').set_value(2).run(timeout=30)
+    at.number_input(key='bt_wr_gross').set_value(2.).run(timeout=30)
+    at.button(key='bt_winner_profile_reload').click().run(timeout=30)
+    assert not at.exception
+    assert at.session_state['result']['winner_per_symbol_top_long']==10
+    assert at.number_input(key='bt_wr_gross').value==1.
     at.selectbox(key='bt_winner_profile_choice').select('q088').run(timeout=30)
     assert not at.exception
     result=at.session_state['result']
@@ -122,7 +151,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert p['confirmation_bars']==0 and p['entry_valid_sessions']==1
     assert asdict(policy)==before_policy and asdict(risk)==before_risk
     assert at.selectbox(key='bt_winner_profile_choice').value=='q088'
-    assert len(at.selectbox(key='bt_winner_profile_choice').options)==5
+    assert len(at.selectbox(key='bt_winner_profile_choice').options)==8
     assert any('+35,13 %' in message.value for message in at.info)
     assert not any(b.key in ('bt_winner_reset_q088','bt_winner_reset_reference','bt_winner_reset_settings')
                    for b in at.button)
@@ -175,16 +204,39 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert at.session_state['result']['winner_policy_overrides']=={}
     assert asdict(policy)==before_policy and asdict(risk)==before_risk
 
+    # B loads the same portfolio/selection defaults but requires B-fitted weights.
+    from modelFactory.oracle_path.directional_features import compact_columns
+    contract['directional_contract']['feature_mode']='compact_volatility'
+    monkeypatch.setattr('modelFactory.oracle_path.directional.load_manifest',lambda *a:
+        (dict(models=[dict(side='long',year=2025)],features=compact_columns('compact_volatility')),'hash'))
+    at.selectbox(key='bt_winner_profile_choice').select('q051_b').run(timeout=30)
+    assert not at.exception
+    b=at.session_state['result']
+    assert b['winner_per_symbol_top_long']==10 and b['winner_top_n']==179
+    assert b['winner_per_symbol_min_long_probability']==.5 and b['winner_per_symbol_min_long_auc']==.5
+    assert b['winner_portfolio_vol_target'] is None and not b['winner_entry_regime_filter']
+    assert not b['winner_drawdown_controller_enabled'] and b['winner_daily_entry_enabled']
+    assert at.number_input(key='bt_wr_gross').value==1.
+    assert any('+297,35 %' in message.value for message in at.info)
+    at.number_input(key=f'bt_per_symbol_top_long_{batch}').set_value(3).run(timeout=30)
+    at.number_input(key='bt_wr_gross').set_value(2.).run(timeout=30)
+    at.button(key='bt_winner_profile_reload').click().run(timeout=30)
+    assert at.session_state['result']['winner_per_symbol_top_long']==10
+    assert at.number_input(key='bt_wr_gross').value==1.
+    args=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**at.session_state['result']))[4:])
+    assert args.per_symbol_top_long==10 and not args.drawdown_controller
 
-def test_old_q088_default_migrates_once_without_overriding_later_selection(monkeypatch):
+
+@pytest.mark.parametrize('old_profile',['q088','q051','q051_vol20_regime'])
+def test_old_research_default_migrates_once_without_overriding_later_selection(monkeypatch,old_profile):
     from ihm.components import winner_backtest_settings as settings
     from ihm.components.winner_backtest_profiles import Q088_MARKER
     state={settings.REFERENCE_DEFAULTS_MARKER:True,settings.GROSS_DEFAULTS_MARKER:True,
-        Q088_MARKER:True,'bt_winner_settings_profile':'q088','bt_winner_profile_choice':'q088',
+        Q088_MARKER:True,'bt_winner_settings_profile':old_profile,'bt_winner_profile_choice':old_profile,
         'bt_wr_gross':2.,'bt_wr_controller_enabled':True}
     monkeypatch.setattr(settings.st,'session_state',state)
-    assert settings.initialize_reference_profile()=='q051_vol20_regime'
-    assert state['bt_winner_profile_choice']=='q051_vol20_regime'
+    assert settings.initialize_reference_profile()=='q051_top10'
+    assert state['bt_winner_profile_choice']=='q051_top10'
     assert state['bt_wr_gross']==1. and not state['bt_wr_controller_enabled']
     settings.reset_execution_settings('q088')
     state['bt_winner_profile_choice']='q088'
