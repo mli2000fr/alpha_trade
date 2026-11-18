@@ -116,7 +116,8 @@ def select_per_symbol(verified,settings):
     a.loc[below_auc,'reason']='LONG_AUC_BELOW_THRESHOLD'
     a.loc[missing_auc,'reason']='MISSING_LONG_CALIBRATION_AUC'
     a.loc[future_auc,'reason']='LONG_AUC_NOT_YET_AVAILABLE'
-    return a
+    from modelFactory.oracle_path.anti_sl import apply_filter
+    return apply_filter(a)
 
 
 def attach_calibration_auc(verified,root):

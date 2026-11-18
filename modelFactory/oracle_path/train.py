@@ -91,6 +91,12 @@ def format_report(report):
                      f"{value(candidate['mean_path_amplitude_top_10_titles_pct'])} % | "
                      f"{value(candidate['mean_path_amplitude_top_20_titles_pct'])} % | "
                      f"{value(candidate['mean_path_amplitude_top_50_titles_pct'])} % |")
+    if report.get('anti_sl_auto_filter'):
+        lines.extend(['', '## Anti-SL automatique après le classement LONG', '',
+            f"{report['anti_sl_models']} têtes annuelles ; {report['anti_sl_skipped']} années sans tête qualifiée.",
+            '44 variables : groupe B et trajectoire des dix séances passées. Cible : SL pendant la première séance.',
+            'Veto au-dessus du percentile 90 de calibration, sans remplacement par le rang suivant.',
+            'Voir anti_sl/manifest.json pour les seuils, dates de disponibilité et abstentions.'])
     lines.extend(["", "Les amplitudes sont des maxima observés a posteriori, pas des gains réalisables.",
                   "Univers de fichier statique : biais de survivance possible. Prix ajustés actuels : pas de garantie PIT des révisions.",
                   "Voir quality.json pour les exclusions et report.json pour la couverture et les métriques complètes."])
@@ -344,6 +350,8 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     registry = load_security_discontinuities()
     backend=resolve_backend(cfg.oracle_path_backend,enable_catboost=cfg.baseline.enable_catboost)
     training_config=asdict(cfg)
+    if not cfg.oracle_path_anti_sl_enabled:
+        training_config.pop('oracle_path_anti_sl_enabled',None)  # preserve legacy fingerprints
     if cfg.oracle_path_directional_feature_mode=='compact':
         training_config.pop('oracle_path_directional_feature_mode',None)
     if not cfg.oracle_path_directional_enabled:
@@ -370,6 +378,11 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
             feature_mode=cfg.oracle_path_directional_feature_mode))
         if cfg.oracle_path_directional_feature_mode=='compact':
             protocol['directional_contract'].pop('feature_mode',None)
+    if cfg.oracle_path_anti_sl_enabled:
+        from .anti_sl import Contract
+        if protocol['directional_contract']['stop_loss_pct']!=Contract().stop_loss_pct:
+            raise ValueError('Anti-SL B témoin : cible fixe SL5 ; utiliser stop_loss_pct=0.05 pour le bundle directionnel.')
+        protocol['anti_sl_contract']=asdict(Contract())
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
@@ -460,6 +473,11 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
             result['directional_skipped']=len(directions['skipped'])
             result['directional_manifest_sha256']=digest(root/'directional/manifest.json')
             result['directional_selection']='TOP20 Oracle -> TOP5 LONG -> risque -> Winner'
+        if cfg.oracle_path_anti_sl_enabled:
+            from .anti_sl import train as train_anti_sl
+            head=train_anti_sl(cfg,root,progress)
+            result.update(anti_sl_models=len(head['models']),anti_sl_skipped=len(head['skipped']),
+                anti_sl_manifest_sha256=digest(root/'anti_sl/manifest.json'),anti_sl_auto_filter=True)
         report = {"status": "completed", "mode": mode, "horizon": horizon, "batch_id": batch_id, "serving_ready": True,
                   "artifact_root": str(root), "quality": quality, "n_features": len(columns), **result}
         atomic_json(root / "report.json", report)

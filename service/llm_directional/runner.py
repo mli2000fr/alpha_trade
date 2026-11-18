@@ -29,6 +29,10 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
     from modelFactory.oracle_path.train import is_path_batch
     path_oracle = is_path_batch('artifacts/models', batch_id)
     if path_oracle:
+        from modelFactory.oracle_path.predict import load_contract
+        from modelFactory.oracle_path.anti_sl import require_bundle_route
+        _,protocol,_,_=load_contract('artifacts/models',batch_id)
+        require_bundle_route(protocol)
         from modelFactory.oracle.predictions_store import load_oracle_predictions
         # Do not bypass path lineage just because Web analysis reads raw SQL.
         load_oracle_predictions(engine, batch_id=batch_id, start_date=str(trade_date), end_date=str(trade_date))

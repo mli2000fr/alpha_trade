@@ -88,3 +88,13 @@ sa réapplication et les courbes. Une image de contrôle du graphique est dans
 
 Les tests n’envoient aucun ordre et n’appellent aucun fournisseur. Aucun réglage
 de compte ou de risque de production n’est changé par le profil de backtest.
+
+## Extension du 18 novembre 2026 : anti-SL optionnel
+
+T1 propose désormais **Ajouter le filtre anti-SL — trajectoire dix séances**,
+après activation du bundle H10 et des variables B. Un batch ainsi entraîné applique
+automatiquement son veto après le TOP LONG, sans remplacement. Les batchs B sans
+cette tête gardent leur comportement. ML Predict doit enregistrer les scores avant
+le backtest. Cette extension ne change pas le profil PAPER quotidien actuel.
+Protocole, stockage, abstentions et limites :
+`doc/ml/oracle_path_anti_sl_pipeline_20261118.md`.

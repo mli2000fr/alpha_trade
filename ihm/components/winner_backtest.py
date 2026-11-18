@@ -58,6 +58,7 @@ def render_model_selection():
             report=json.loads(path.read_text(encoding='utf-8'))
             if report.get('status')=='completed' and report.get('serving_ready') is True:
                 badge=' + per-symbol LONG/SHORT' if report.get('directional_models') else ' — Oracle seul'
+                if report.get('anti_sl_models'):badge+=' + anti-SL automatique'
                 batch_id=path.parent.parent.name
                 comment=comments.get(batch_id)
                 prefix=f'{comment} — ' if comment else ''
@@ -70,6 +71,11 @@ def render_model_selection():
     batch=st.selectbox('Modèle Oracle parcours',list(choices),format_func=choices.get,key='bt_winner_batch')
     try:
         _,contract,_,folds=load_contract(MODEL_ROOT,batch)
+        from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
+        anti_active=anti_enabled(contract)
+        if anti_active:
+            st.info('Ce batch contient une tête anti-SL : veto automatique après le classement LONG, sans remplacement. '
+                    'Compléter ML Predict pour disposer des scores anti-SL aux dates du replay.')
         bundle=enabled(contract)
         manifest=load_manifest(MODEL_ROOT/batch/'oracle_path')[0] if bundle else None
     except (OSError,ValueError) as exc:
@@ -79,8 +85,10 @@ def render_model_selection():
     pool=contract.get('directional_contract',{}).get('oracle_top_n',20)
     from ihm.components.winner_backtest_profiles import initialize_research_selection
     initialize_research_selection(batch,bundle)
+    selection_key=f'bt_winner_per_symbol_long_{batch}'
+    if anti_active:st.session_state[selection_key]=True
     active=st.checkbox('per-symbol',
-        value=bundle,disabled=not bundle,key=f'bt_winner_per_symbol_long_{batch}',
+        value=bundle,disabled=not bundle or anti_active,key=selection_key,
         help='Classe les candidats Oracle avec les probabilités LONG/SHORT des modèles par titre du même batch. '
              'Les nombres et directions choisis ici restent propres à ce backtest.')
     active=bool(bundle and active)
