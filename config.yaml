@@ -24,7 +24,7 @@ winner_pyramiding:
   initial_position_fraction: 1.0  # 0.5 = demi-position ; 1.0 = complète.
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
   reinforcement_trigger_pct: 0.05
-  confirmation_bars: 2  # Deux clôtures 5m de confirmation après cassure ; 0 = entrée standard sans confirmation.
+  confirmation_bars: 0  # Témoin B : entrée sans confirmation 5m ; le profil PAPER programme l'ouverture J+1.
   # Entrée standard uniquement : false = ordre limite DAY, sans contrôle bid/ask temps réel.
   # Plafond issu du gap maximal figé (sinon buffer limite), sizing au prix maximal.
   # Confirmation 5m, renforcement, SL/TP/trailing et verrous restent indépendants.
@@ -33,10 +33,10 @@ winner_pyramiding:
   take_profit_pct: null  # Aucun TP en prix.
   trailing_stop_pct: null # Aucun trailing ; SL et sortie temporelle conservés.
   horizon_sessions: 10  # Entrée incluse ; sortie à l'ouverture suivante après cet horizon (ici 11e séance).
-  entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
+  entry_valid_sessions: 1  # Témoin B : ouverture J+1 uniquement, aucun report d'achat sur les séances suivantes.
   max_quote_age_seconds: 60
   max_bar_delay_seconds: 60
-  market_data_delay_seconds: 930  # 15 min 30 s : délai SIP + marge ; jamais de fill rétroactif.
+  market_data_delay_seconds: 0  # Sans confirmation, trailing ni renforcement : aucune attente de bougie 5m.
   delayed_entry_limit_buffer_pct: 0.01  # Ordre IOC plafonné à +1% du dernier close retardé ; pas un cours temps réel.
   cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
 
@@ -49,8 +49,9 @@ oracle_path:
   min_prediction_coverage_ratio: 0.93  # Inférence du bundle : 30/32 titres suffisent ; cible d'entraînement inchangée.
   directional:
     enabled: true  # Défaut de la case bundle parcours ; les anciens batches restent inchangés.
-    oracle_top_n: 20
-    selected_n: 5
+    oracle_top_fraction: 0.10  # Nouveaux entraînements : résolu sur l'univers complet, puis figé dans le modèle.
+    oracle_top_n: 20  # Fallback seulement si oracle_top_fraction est null/absent.
+    selected_n: 10
     stop_loss_pct: 0.05
     horizon_sessions: 10
     fee_per_leg: 0.0008
@@ -79,14 +80,23 @@ oracle_backtest:
   stop_loss_pct: 0.10
 
 us_pipeline:
-  # Profil PAPER exclusif : TOP10% Oracle H10 -> TOP5 LONG, score>0.50/AUC>=0.50,
+  # Ancien profil PAPER : TOP10% Oracle H10 -> TOP5 LONG, score>0.50/AUC>=0.50,
   # SL5/open11, budget covariance 60 séances vol20 + SPY>0.98*SMA200.
   # Prioritaire sur options/GPT et les presets du risque pour ce batch seulement.
   # false = retour au parcours antérieur ; les campagnes ouvertes gardent leurs stops.
   q051_vol20_regime:
-    enabled: true
+    enabled: false  # Ancien profil conservé ; un seul profil quotidien peut être actif.
     model_batch_id: model-factory-20261114122842-c59bed  # Fin 2026, modèles annuels LONG 2026.
     artifacts_dir: artifacts/models
+  # Nouveau parcours PAPER : TOP10% Oracle H10 -> TOP10 LONG B29, score>0.50/AUC>=0.50,
+  # puis veto anti-SL optionnel, sans remplacement. Position complète, SL5/open11,
+  # plafond achats1x/capacité margin2x ; sans vol20/régime/B4/DD/facteurs/corrélation/secteurs.
+  # Les profils versionnés gardent les contrôles compte/capital/verrous et les protections déjà ouvertes.
+  b_anti_sl_reference:
+    enabled: true
+    model_batch_id: model-factory-20261118172104-2f6a31  # Étape10 autorisée seulement après publication complète de l'entraînement.
+    artifacts_dir: artifacts/models
+    apply_anti_sl: true  # false = B témoin ; true = B + anti-SL. Choix figé par sélection10, repris à11/12.
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
   # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.
@@ -108,7 +118,7 @@ sentiment_news_ingestion:
   min_success_ratio: 0.95  # >=95 % des titres demandés : poursuivre malgré des échecs isolés.
 
 options_directional_filter:
-  enabled: true  # Filtre expérimental options après Oracle ; IHM et us_pipeline, PAPER uniquement.
+  enabled: false  # Le parcours B témoin n'ajoute pas le filtre options ; réactivation possible séparément.
   # Sélection commune aux comptes PAPER ; risque/exécution/claims séparés par compte.
   oracle_top_n: 20  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
   min_combined_score: 0.5  # Retenir LONG si score strictement supérieur ; ce n'est pas une probabilité.

@@ -231,6 +231,10 @@ def test_outer_training_publishes_optional_head_only_after_directional(tmp_path,
     from dataclasses import replace
     from tests.test_oracle_path import config,bars
     from modelFactory.oracle_path import train as trainer,directional as d
+    # This20-symbol synthetic fixture tests publication ordering, not the
+    # workstation's current10%-of1790 trading defaults.
+    monkeypatch.setattr('common.config_loader.load_config', lambda: dict(oracle_path=dict(
+        directional=dict(enabled=True, oracle_top_n=20, selected_n=5))))
     cfg=replace(config(tmp_path/'batch'),oracle_horizon=10,oracle_path_directional_enabled=True,
         oracle_path_directional_feature_mode='compact_volatility',oracle_path_anti_sl_enabled=active)
     symbols=[f'S{i:02}' for i in range(20)]

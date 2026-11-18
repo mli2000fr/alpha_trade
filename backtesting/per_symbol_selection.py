@@ -51,7 +51,7 @@ class PerSymbolSelection:
         return f'TOP{self.oracle_top_n} Oracle -> '+ ' + '.join(branches)+' per-symbol'
 
 
-def select_per_symbol(verified,settings):
+def select_per_symbol(verified,settings,*,apply_anti_sl=True):
     """Independent branch rankings INSIDE the same fixed Oracle TOP-N."""
     a=verified.copy().rename(columns={'trade_date':'date'})
     a['date']=pd.to_datetime(a.date).dt.normalize()
@@ -117,7 +117,7 @@ def select_per_symbol(verified,settings):
     a.loc[missing_auc,'reason']='MISSING_LONG_CALIBRATION_AUC'
     a.loc[future_auc,'reason']='LONG_AUC_NOT_YET_AVAILABLE'
     from modelFactory.oracle_path.anti_sl import apply_filter
-    return apply_filter(a)
+    return apply_filter(a,filter_enabled=apply_anti_sl)
 
 
 def attach_calibration_auc(verified,root):

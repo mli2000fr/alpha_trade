@@ -30,7 +30,7 @@ def quantity(*, symbol, price, proposed, context, risk_budget=None, full_quantit
     if (not math.isfinite(float(price)) or price <= 0 or not math.isfinite(float(proposed))
             or proposed < 0 or not math.isfinite(float(context['available_buying_power']))):
         raise ValueError('Q051 : prix, quantité ou capacité invalide')
-    if not context['regime_allowed']:
+    if reference()['regime'].get('enabled', True) and not context['regime_allowed']:
         return dict(quantity=0, reason='Q051_SPY_BELOW_098_SMA200')
     if not context.get('concentration_allowed', True):
         return dict(quantity=0, reason='Q051_REFERENCE_SYMBOL_CONCENTRATION')
@@ -65,9 +65,11 @@ def quantity(*, symbol, price, proposed, context, risk_budget=None, full_quantit
     if native <= 0:
         reason = checker.get_last_decision_reason()
         return dict(quantity=0, reason=reason if reason != 'OK' else 'Q051_BUDGET_OR_CAPACITY')
-    decision = portfolio_limit(context['returns'], prior_day=context['signal_day'],
+    vol = reference()['portfolio_volatility']
+    decision = (portfolio_limit(context['returns'], prior_day=context['signal_day'],
         positions=context['positions'], pending=context['pending_entries'], symbol=symbol,
-        price=price, equity=context['equity'], proposed=native, target=.2, lookback=60)
+        price=price, equity=context['equity'], proposed=native, target=vol['target'], lookback=vol['lookback'])
+        if vol.get('enabled', True) else dict(quantity=native, reason='B_REFERENCE_NATIVE_SIZING'))
     final = int(checker.check_position_size(symbol, decision['quantity'], price, side='buy')) if decision['quantity'] else 0
     return dict(quantity=final, reason=decision['reason'], covariance=decision,
                 risk_budget=budget, config_hash=cfg.fingerprint)
@@ -135,13 +137,16 @@ def capture(repo, broker, account, signal_day, now, *, clock=None):
             raise ValueError('Q051 : ordre en cours sans réservation de capital vérifiable')
         pending.append(dict(symbol=o['symbol'], side=o['side'], notional=remaining*float(price)))
     names = sorted({p['symbol'] for p in positions} | {p['symbol'] for p in pending})
-    spy = load_daily_close_series(repo.engine, 'SPY', signal_day)
-    official = [s.session_date for s in cal.sessions(signal_day-timedelta(days=500),signal_day) if s.is_open][-200:]
-    spy = spy.reindex(pd.DatetimeIndex(official))
+    regime_ok = True
+    if reference()['regime'].get('enabled', True):
+        spy = load_daily_close_series(repo.engine, 'SPY', signal_day)
+        official = [s.session_date for s in cal.sessions(signal_day-timedelta(days=500),signal_day) if s.is_open][-200:]
+        spy = spy.reindex(pd.DatetimeIndex(official))
+        regime_ok = regime_allowed(spy, signal_day)
     return dict(account_id=account, broker_mode='paper', captured_at=observed,
         equity=equity, available_buying_power=min(buying_power, 2*equity),
         positions=positions, pending_entries=pending, signal_day=signal_day,
-        regime_allowed=regime_allowed(spy, signal_day), sector_map={}, returns=pd.DataFrame(),
+        regime_allowed=regime_ok, sector_map={}, returns=pd.DataFrame(),
         raw_account=raw, base_symbols=names)
 
 
@@ -152,9 +157,11 @@ def complete_context(context, engine, symbols):
     from common.market_calendar import get_market_calendar
     from datetime import timedelta
     day = context['signal_day']
+    needs_covariance = reference()['portfolio_volatility'].get('enabled', True)
+    lookback = reference()['portfolio_volatility']['lookback'] + 1 if needs_covariance else 1
     sessions = [s.session_date for s in get_market_calendar('US_EQ', allow_us_weekday_fallback=False).sessions(
-        day-timedelta(days=150), day) if s.is_open][-61:]
-    if len(sessions) != 61 or sessions[-1] != day:
+        day-timedelta(days=150), day) if s.is_open][-lookback:]
+    if len(sessions) != lookback or sessions[-1] != day:
         raise ValueError('Q051 : calendrier de covariance incomplet')
     from common.daily_bar_sources import select_daily_bars, SOURCES
     price_stmt = text('SELECT symbol,date,close,data_source FROM stock_bars_daily '
@@ -183,6 +190,11 @@ class NativeQ051Risk:
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def __call__(self, state, version, proposed, snapshot, now, kind):
+        from common.q051_paper import profile_scope
+        with profile_scope(state['paper_strategy_profile']['profile_id']):
+            return self._call(state, version, proposed, snapshot, now, kind)
+
+    def _call(self, state, version, proposed, snapshot, now, kind):
         from common.q051_paper import settings, entry_window, require_paper
         from execution_engine.winner_live_risk import concentration_allowed
         validate_frozen(state['paper_strategy_profile'])

@@ -230,7 +230,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     secondary_steps = selected_steps([11, 12])
     account_plans = [(replace(options, account_id=account), secondary_steps) for account in other_accounts]
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
-        strategy_profile='q051_vol20_regime_v1' if options.q051_paper_enabled else 'standard',
+        strategy_profile=options.q051_profile_id if options.q051_paper_enabled else 'standard',
         date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],
         selected_step_numbers=[int(s.num) for s in steps],
@@ -248,8 +248,13 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         watcher_before_execution=any(s.num=='12' for s in steps) and options.execution_mode=='paper',
         execution_orders=any(s.num=='12' for s in steps) and options.execution_mode=='paper')
     if options.q051_paper_enabled:
-        LOGGER.info('Q051 vol20 + régime PAPER actif : TOP10%% Oracle H10 → TOP5 LONG, SL5/open11, '
-            'plafond achats1x, sans B4/DD15 ni options/GPT ; sélection=%s modèle=%s',
+        from common.q051_paper import reference
+        active_profile = reference(options.q051_profile_id)
+        LOGGER.info('Profil %s PAPER actif : TOP10%% Oracle H10 → TOP%d LONG, SL5/open11, '
+            'plafond achats1x, sans B4/DD15 ni options/GPT ; anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
+            options.q051_profile_id, active_profile['selection']['long_top_n'],
+            active_profile['selection'].get('apply_anti_sl', 'selon modèle'),
+            active_profile['portfolio_volatility'].get('enabled', True), active_profile['regime'].get('enabled', True),
             options.q051_run_id,options.ml_live_predict_batch_id)
     outcome = Outcome(requested=len(steps)+2*len(other_accounts), details=plan)
     if dry_run:

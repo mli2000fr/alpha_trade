@@ -9538,3 +9538,17 @@ Inventaire SQL38tables en lecture seule : historiquesSEC significatifs présents
 Conclusion : **pas de combinaison suffisamment fiable trouvée pour remplacer le contrôleur, pas d’impossibilité générale démontrée**. Pas de nouveau seuil retenu pour expliquer uniquement2024/25.15tests ciblés passent, contrôles de préfixe et empreintes archivés. Aucun entraînementOracle/per-symbol, téléchargement, appelLLM, écritureSQL, ordre ou changement de production. Les témoins sources conservent leurs limites de prix révisés, univers contemporain et intraday partiel/repliOHLC.
 
 Rapport : `doc/ml/q051_protection_feature_audit_20261118.md`. Archives : `artifacts/research/us_q051_protection_feature_audit/20261118-v1`, dont `sentinel-stability.png`, `warning-timing-diagnostic.png`, `nomination-2024-purged.csv` et `final-audit-status.json`.
+
+<!-- B_ANTI_SL_PAPER_CONFIG_20261118 -->
+
+# B / B + anti-SL témoin — profil quotidien PAPER et interrupteur de veto
+
+18novembre2026, raccordement demandé par l’utilisateur au batch `model-factory-20261118172104-2f6a31`, encore en entraînement. `us_pipeline.b_anti_sl_reference.enabled=true`, ancien `q051_vol20_regime.enabled=false`. `apply_anti_sl=true` choisit `q051_b_anti_sl_witness_v1` ; false choisit `q051_b_witness_v1`. Deux profils statiques distincts ; choix figé dans la sélection et transmis aux étapes10/11/12 de chaque compte, sans conversion des campagnes déjà ouvertes. Pas d’ajout de filtre options/GPT.
+
+TOP10%OracleH10 → TOP10LONG B29, score>0,50/AUC calibration≥0,50, puis veto optionnel sans remplacement. Position complète, entréeJ+1sans confirmation5m, SL5/open11, sans TP/trailing/renforcement. Risque archivé1,25%, poids20%,20positions, minimum50$, plafond achats1×/capacitémargin2×. Sans budget vol20, régimeSPY, B4/DD, facteurs/corrélation/secteurs ; contrôles compte, capacité, prixJ, réservations, verrous et protections broker conservés. Le contexte B n’exige plus de SPY ni de covariance inutilisés.
+
+Nouveaux profils dérivés de la configuration de rechercheSL10, empreintes archivées ; ancien JSON vol20/régime inchangé. Winner global aligné0confirmation/validité1/horizon10. Pour les futurs entraînements, fractionOracle0,10résolue sur l’univers complet et TOP LONG10. Le contrat TOP20/TOP5 du modèle actuellement entraîné reste inchangé ; le profil PAPER reclasse ses probabilités179→TOP10. Entraînement incomplet : arrêt explicite avant appel broker, aucun fallback vers l’ancien modèle.
+
+263tests ciblés distincts passent : profils nouveaux/anciens, ON/OFF sans remplissage, seuils/lineage conservés, routage multi-comptes, tailles/capital, capture sans SPY/covariance, revalidation native au watcher avec profil de campagne, soumission OPG/SL5/open11 sur faux broker, couvertures et entraînement. Prévol de la configuration réelle archivé, sansSQL ni fournisseur. Aucun entraînement supplémentaire, interruption du run, redémarrage de service ou ordre effectué ; aucune nouvelle performance revendiquée et pas de certification de parité live.
+
+Guide : `doc/ml/b_anti_sl_paper_20261118.md`. Prévol : `artifacts/operations/b_anti_sl_profile_setup/20261118-v1/validation.json`.
