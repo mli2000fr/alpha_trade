@@ -7,8 +7,8 @@ No production configuration or model contract is modified.
 import streamlit as st
 
 Q088_MARKER = 'bt_winner_q088_size125_b4dd15_defaults_20261107'
-DEFAULT_PROFILE = 'q051_top10'
-DEFAULT_PROFILE_MARKER = 'bt_winner_q051_top10_default_20261115'
+DEFAULT_PROFILE = 'q051_b_anti_sl'
+DEFAULT_PROFILE_MARKER = 'bt_winner_b_anti_sl_default_20261118'
 Q088_WIDGETS = {
     'bt_wp_portfolio_vol_enabled': False, 'bt_wp_portfolio_vol_target': 20.,
     'bt_wp_portfolio_vol_lookback': 60, 'bt_wp_entry_regime_enabled': False,
@@ -45,7 +45,8 @@ Q051_WIDGETS = {
 }
 
 PROFILE_LABELS = {
-    'q051_top10': 'Q051 témoin, TOP10 (défaut)',
+    'q051_b_anti_sl': 'B + anti-SL témoin (défaut)',
+    'q051_top10': 'Q051 témoin, TOP10',
     'q051_b': 'Q051 — B seul, volatilité inhabituelle per-symbol, TOP10',
     'q051_vol20_regime_top10': 'Q051 — Volatilité 20 % + régime, TOP10',
     'q051_vol20_regime': 'Q051 — Volatilité 20 % + régime, TOP5',
@@ -55,6 +56,17 @@ PROFILE_LABELS = {
     'reference': 'Ancien test de référence',
 }
 PROFILE_DESCRIPTIONS = {
+    'q051_b_anti_sl': (
+        'B + anti-SL témoin : TOP10 % Oracle H10 → TOP10 LONG per-symbol B, score > 0,50 '
+        'et AUC de calibration ≥ 0,50, puis veto anti-SL automatique sans remplacement. '
+        'Nécessite un batch B29 avec tête anti-SL entraînée : 44 variables dont la trajectoire des dix séances passées, '
+        'risque de SL5 pendant la première séance ; seuil au percentile 90 de calibration. '
+        'Position complète, entrée journalière J+1 sans confirmation, SL5 %, sans TP/trailing/renforcement, sortie open11. '
+        'Risque 1,25 %, poids 20 %, 20 positions, minimum 50 $, plafond achats 1×, capacité margin 2×. '
+        'Sans budget vol20, régime, B4/DD15, facteurs, corrélation, limites sectorielles ni pause100. '
+        'Recherche 2021–1 octobre 2026, départ 4 000 $ : 16 140,82 $, +303,52 %, DD −34,98 %, '
+        '38,13 % gagnants, 1 356 trades. Frais et financement inclus ; intraday partiel/repli OHLC '
+        'et réserve sur un label de première séance. Le profil ne crée pas le modèle ni les prédictions anti-SL.'),
     'q051_b': (
         'B seul : TOP10 % Oracle H10 → TOP10 LONG per-symbol, score > 0,50 et AUC de calibration ≥ 0,50. '
         'Modèles par titre à 29 variables : 24 existantes + volatilité 60/120 séances et écarts '
@@ -129,6 +141,7 @@ PROFILE_WIDGETS = {
     'q051': Q051_WIDGETS,
     'q051_top10': Q051_WIDGETS,
     'q051_b': Q051_WIDGETS,
+    'q051_b_anti_sl': Q051_WIDGETS,
     'q051_vol20_regime': {**Q051_WIDGETS,'bt_wp_portfolio_vol_enabled':True,'bt_wp_entry_regime_enabled':True},
     'q051_vol20_regime_top10': {**Q051_WIDGETS,'bt_wp_portfolio_vol_enabled':True,'bt_wp_entry_regime_enabled':True},
 }
@@ -162,7 +175,7 @@ def initialize_research_selection(batch, bundle):
     st.session_state[pool_key+'_mode'] = 'Pourcentage de l’univers'
     st.session_state[pool_key+'_pct'] = 10. if q051 else 20.
     if bundle:
-        count = 10 if profile in ('q088','q051_top10','q051_vol20_regime_top10','q051_b') else 5
+        count = 10 if profile in ('q088','q051_top10','q051_vol20_regime_top10','q051_b','q051_b_anti_sl') else 5
         threshold = .5 if q051 else .6
         st.session_state.update({
             f'bt_winner_per_symbol_long_{batch}': True,
@@ -184,13 +197,19 @@ def apply_selected_profile():
 
 
 def validate_profile_model(profile,contract,manifest,per_symbol_active):
-    if profile!='q051_b':return
+    if profile not in ('q051_b','q051_b_anti_sl'):return
     from modelFactory.oracle_path.directional_features import compact_columns
     if (not per_symbol_active or contract.get('directional_contract',{}).get('feature_mode')!='compact_volatility'
             or (manifest or {}).get('features')!=compact_columns('compact_volatility')):
         raise ValueError('Le profil B nécessite un batch Oracle + per-symbol entraîné avec '
             '« Volatilité inhabituelle — per-symbol (B) » (29 variables), et la case per-symbol activée. '
             'Sélectionner ce batch ou entraîner un nouveau bundle ; un ancien modèle à 24/173 variables reste inchangé.')
+    if profile=='q051_b_anti_sl':
+        from modelFactory.oracle_path.anti_sl import enabled
+        if contract.get('horizon')!=10 or not enabled(contract):
+            raise ValueError('B + anti-SL témoin nécessite un batch H10/B29 contenant une tête anti-SL entraînée. '
+                'Dans Pipeline T1, entraîner le bundle avec « Ajouter le filtre anti-SL », puis lancer ML Predict. '
+                'Pour un batch B sans cette tête, choisir le profil B seul.')
 
 
 def render_profile_selector(profile):

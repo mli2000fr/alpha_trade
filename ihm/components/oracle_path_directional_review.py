@@ -21,10 +21,17 @@ def render(options):
             st.info(f'Aucune prédiction enregistrée pour ce batch et la séance {day}. Lancer l’étape 10.')
             return True
         ranked=read_predictions(get_engine(),root,frame,batch)
+        from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
+        has_anti=anti_enabled(protocol)
+        if has_anti:
+            st.info('Anti-SL du batch appliqué automatiquement après le TOP LONG ; aucun remplacement. '
+                    'Une abstention faute de modèle causal/features est indiquée explicitement.')
         ranked=ranked[ranked.oracle_rank.le(protocol['directional_contract']['oracle_top_n'])].sort_values('oracle_rank')
         names={'symbol':'Symbole','oracle_rank':'Rang Oracle','proba_extreme':'Score amplitude',
                'long_probability':'Probabilité gain LONG','short_probability':'Probabilité gain SHORT — non utilisée',
                'long_rank':'Rang LONG','selected':'Retenu LONG','reason':'Motif'}
+        if has_anti:names.update(anti_sl_probability='Risque SL première séance',anti_sl_threshold='Seuil anti-SL',
+            anti_sl_rejected='Exclu anti-SL',anti_sl_status='Statut anti-SL')
         st.caption(f'Séance {day} · batch {batch} · Oracle et modèles par titre H{protocol["directional_contract"]["horizon_sessions"]} · '
                    f'TOP{protocol["directional_contract"]["selected_n"]} LONG au maximum. '
                    'Le risque peut ensuite refuser une entrée ; un titre déjà détenu n’est pas remplacé.')

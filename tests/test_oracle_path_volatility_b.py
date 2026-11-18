@@ -104,6 +104,14 @@ def test_b_profile_rejects_non_b_models():
         validate_profile_model('q051_b',{'directional_contract':{'feature_mode':'compact'}},{'features':d.INPUTS},True)
     validate_profile_model('q051_b',{'directional_contract':{'feature_mode':'compact_volatility'}},
         {'features':compact_columns('compact_volatility')},True)
+    contract={'horizon':10,'directional_contract':{'feature_mode':'compact_volatility'}}
+    with pytest.raises(ValueError,match='tête anti-SL'):
+        validate_profile_model('q051_b_anti_sl',contract,{'features':compact_columns('compact_volatility')},True)
+    contract['training_config']={'oracle_path_anti_sl_enabled':True}
+    validate_profile_model('q051_b_anti_sl',contract,{'features':compact_columns('compact_volatility')},True)
+    contract['horizon']=20
+    with pytest.raises(ValueError,match='H10/B29'):
+        validate_profile_model('q051_b_anti_sl',contract,{'features':compact_columns('compact_volatility')},True)
 
 
 def test_model_config_accepts_b_and_requires_bundle():

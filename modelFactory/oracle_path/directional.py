@@ -69,6 +69,9 @@ def use_long_selection(protocol, requested=None):
         raise ValueError('Sélection per-symbol LONG : booléen requis')
     if requested is True and not enabled(protocol):
         raise ValueError('Ce batch ne contient pas de modèles per-symbol LONG ; choisir un bundle parcours')
+    if requested is False:
+        from .anti_sl import enabled as anti_enabled
+        if anti_enabled(protocol):raise ValueError('Batch anti-SL : conserver la sélection per-symbol LONG active pour appliquer le veto automatique.')
     return enabled(protocol) if requested is None else requested
 
 
@@ -331,6 +334,8 @@ def infer(engine,root,scores,*,oracle_features=None,bar_frame=None):
     scores=scores.copy();scores['date']=pd.to_datetime(scores.date).dt.normalize()
     first,last=scores.date.min(),scores.date.max();start=first-pd.Timedelta(days=650)
     protocol=json.loads((Path(root)/'protocol.json').read_text())
+    from . import anti_sl
+    anti_active=anti_sl.enabled(protocol);anti_features=[]
     if c.feature_mode=='compact_volatility':
         # B z-scores normalize against up to 1260 sessions, plus the volatility
         # lookback itself. Keep the same origin as training; 650 calendar days
@@ -359,6 +364,9 @@ def infer(engine,root,scores,*,oracle_features=None,bar_frame=None):
                 else oracle_features.iloc[:0]) if oracle_features is not None else None
             f=(oracle_panels(g,calendar,symbol_features,columns) if c.feature_mode=='oracle'
                 else panels(g,bench,calendar,feature_mode=c.feature_mode))
+            if anti_active:
+                history=anti_sl.path_features(f,calendar)
+                anti_features.append(history[history.date.between(first,last)])
             f=f[f.date.between(first,last)].set_index('date')
             for row in scores[scores.symbol.eq(symbol)].itertuples():
                 item=dict(date=row.date,symbol=symbol,long_probability=None,short_probability=None,long_model_sha256=None,short_model_sha256=None)
@@ -378,6 +386,10 @@ def infer(engine,root,scores,*,oracle_features=None,bar_frame=None):
     cols=['date','symbol','long_probability','short_probability','long_model_sha256','short_model_sha256']
     result=rank(scores,pd.DataFrame(out,columns=cols),c)
     result['manifest_sha256']=checksum
+    if anti_active:
+        features=(pd.concat(anti_features,ignore_index=True) if anti_features else pd.DataFrame(columns=['date','symbol',*anti_sl.columns()]))
+        risks=anti_sl.score_features(root,scores,features)
+        result=anti_sl.apply_filter(result.merge(risks,on=['date','symbol'],validate='one_to_one'))
     return result
 
 
@@ -406,6 +418,11 @@ def write_predictions(engine,frame,batch_id):
         ','.join(k+'=VALUES('+k+')' for k in cols))
     with engine.begin() as conn:
         conn.execute(text(DDL))
+        from .anti_sl import FIELDS
+        if any(c in frame for c in FIELDS):
+            if not set(FIELDS)<=set(frame):raise ValueError('Scores anti-SL incomplets à persister')
+            from .anti_sl_store import write
+            write(conn,frame,batch_id)
         if rows:conn.execute(insert,rows)
     LOG.info('Bundle parcours batch=%s : %d lignes, %d sélectionnées LONG, aucune sélection SHORT',
              batch_id,len(rows),int(frame.selected.sum()))
@@ -434,6 +451,12 @@ def validate_saved(root,oracle,saved):
                 raise ValueError('Score directionnel non causal ou autre modèle')
     columns=['date','symbol','long_probability','short_probability','long_model_sha256','short_model_sha256']
     computed=rank(a,b[columns],c).sort_values(['date','symbol']).reset_index(drop=True)
+    from .anti_sl import enabled as anti_enabled,FIELDS,apply_filter
+    protocol=json.loads((Path(root)/'protocol.json').read_text())
+    if anti_enabled(protocol):
+        from .anti_sl_store import validate
+        risks=validate(root,a,b)
+        computed=apply_filter(computed.merge(risks,on=['date','symbol'],validate='one_to_one'))
     archived=b.sort_values(['date','symbol']).reset_index(drop=True)
     for col in ['oracle_rank','long_rank','selected','reason']:
         if not computed[col].fillna(-1).eq(archived[col].fillna(-1)).all():
@@ -455,6 +478,12 @@ def read_predictions(engine,root,oracle,batch_id,*,cutoff=None):
     with engine.connect() as conn:
         saved=pd.read_sql(query,conn,params=dict(batch=batch_id,start=days.min().date(),end=days.max().date(),
             symbols=sorted(set(a.symbol)),epoch=now.timestamp(),cutoff=now.astimezone(timezone.utc).replace(tzinfo=None)))
+    from .anti_sl import enabled as anti_enabled
+    if anti_enabled(json.loads((Path(root)/'protocol.json').read_text())):
+        from .anti_sl_store import read
+        risks=read(engine,root,a,batch_id,cutoff=now)
+        saved['prediction_date']=pd.to_datetime(saved.prediction_date).dt.normalize()
+        saved=saved.merge(risks.rename(columns={'date':'prediction_date'}),on=['prediction_date','symbol'],validate='one_to_one')
     return validate_saved(root,a,saved)
 
 
