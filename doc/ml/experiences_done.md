@@ -9487,3 +9487,54 @@ La case per-symbol du backtest reste activée pour un batch anti-SL. Risque, seu
 Tests : apprentissage LightGBM/Platt et labels synthétiques, parité avec le protocole de recherche, causalité, OOF, calibration Q90, seuils/empreintes corrompus, transaction et relecture SQLite en lecture seule, absence de remplacement, re-classement personnalisé/PAPER, commande T1 et interface. Régressions Oracle/B/risque/sélection/options/LLM contrôlées. Un test annexe TLS (`test_verified_tls_cannot_be_disabled`) rencontre une PermissionError sur le canal de journalisation SSL de l’environnement Windows ; aucune désactivation TLS ou modification de ce contrôle.
 
 Aucun entraînement sur les données réelles, appel fournisseur/LLM, ordre, changement de config.yaml ou de compte effectué. Le profil PAPER courant reste TOP5 / vol20 + régime : l’ajout automatique du veto n’en fait pas le témoin TOP10 sans protections. Pas d’import automatique des poids de recherche, ni de nouvelle revendication de rentabilité ou de parité live. Guide : `doc/ml/oracle_path_anti_sl_pipeline_20261118.md`.
+
+## 18 novembre 2026 — profil IHM B + anti-SL témoin par défaut
+
+La liste des profils du backtest ajoute **B + anti-SL témoin**, désormais sélectionné par défaut. Même portefeuille B TOP10 : TOP10 % Oracle H10 → TOP10 LONG B29, score>0,50/AUC≥0,50, puis veto anti-SL sans remplacement, SL5/open11, sans TP/trailing/renforcement, vol20/régime/B4/DD/facteurs/corrélation/secteurs désactivés, plafond achats1×/capacité margin2×. Le profil exige un batch H10/B29 avec tête anti-SL native entraînée ; il ne fabrique pas le modèle ni ses scores. La réapplication restaure aussi TOP et seuils, sans changer le modèle ni les dates. Les anciens profils restent sélectionnables et les modifications manuelles sont conservées après l’initialisation du nouveau défaut.
+
+La fenêtre de comparaison présente huit courbes avec le cas archivé SL10 de `artifacts/research/us_q051_b_early_sl/20261116-v1` : 16 140,82 $, +303,52 %, DD intraday−34,98 %, taux gagnant38,13 %, 1356trades. Courbe quotidienne et capital final recoupés, validation du pool OOF et sélection sans remplacement, revue arithmétique avec réserve explicitée : 1écart de label sur1354trades qualifiés pour ce cas. Aucun nouveau replay ou entraînement, aucune nouvelle validation hors échantillon. Ce profil témoin n’active pas la protection interne à demi-taille.
+
+90tests ciblés passent, dont interface complète, réapplication, migration du défaut, refus des modèles incompatibles et présence effective de la huitième courbe. Aperçu vérifié : `artifacts/ui_checks/b_anti_sl_profiles_20261118.png`. Aucun changement de production, SQL, compte ou ordre.
+
+<!-- Q051_INTERNAL_LIQUIDATION_RESULTS_20261118 -->
+
+# B / B + anti-SL — liquidation puis vol20 + régime
+
+2021–1er octobre2026, 4000$ continus, deux témoins rejoués identiques aux archives. Activation/reprise figées comme les tests demi-taille ; liquidation à l’ouverture suivante, puis vol20/covariance60 et filtre SPY>98%SMA200 seulement en protection. À OFF : retour aux règles habituelles. Rachat à la même ouverture possible après liquidation si les limites passent.
+
+| Cas | Capital final | Rendement | DD intraday | Gagnants | Trades | Engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B témoin | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 | 6401.43$ |
+| B + anti-SL témoin | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 | 7069.05$ |
+| B — liquidation / vol20+régime / sortie taux | 6196.90$ | +54.92% | -48.00% | 37.81% | 1251 | 2766.33$ |
+| B — liquidation / vol20+régime / sortie témoin+5% | 8190.38$ | +104.76% | -39.12% | 36.37% | 1284 | 3224.83$ |
+| B + anti-SL — liquidation / vol20+régime / sortie taux | 7933.75$ | +98.34% | -44.81% | 37.35% | 1178 | 3306.87$ |
+| B + anti-SL — liquidation / vol20+régime / sortie témoin+5% | 7667.96$ | +91.70% | -42.19% | 36.48% | 1198 | 3260.23$ |
+
+Revue : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Réserves prix 0 ; écarts de labels 6/7667.
+Frais et financement natifs, capital partagé, quantités entières, SL5/open11 et mêmes signaux. Aucun appel fournisseur/LLM, entraînement, SQL ou ordre réel ; pas de changement de production. Historique déjà exploré, univers contemporain, prix révisés et intraday incomplet/repli OHLC : résultat exploratoire.
+Archives : `artifacts\research\us_q051_internal_liquidation\20261118-v1`.
+
+Revue finale : deux témoins reproduits ; `liquidation-validation.json` PASS pour les 14/13/14/15 liquidations à l’ouverture officielle suivant ON, quantités et frais natifs rapprochés des trades. SPY et covariance consultés uniquement en protection, sans donnée future ni augmentation de la taille approuvée. Le DD maximal des quatre variantes nouvelles tombe en2022 (14juillet,24janvier,15juillet,3novembre), contre7avril2025 pour les témoins. Le DD de la fenêtre novembre2024–juin2025 baisse, mais cela ne suffit pas à améliorer le compromis global : quatre rendements fortement réduits et trois DD globaux aggravés. Réserve de label identique BIDU26février2021 dans les six cas. Aucun seuil réoptimisé ni déploiement.
+
+Contrôle des phases : première activation10août2021, aucune différence avec les témoins jusque-là, première liquidation11août2021. Le24décembre2024 était un épisode ultérieur.3266sélections OFF sans veto supplémentaire, aucun budget vol20 en OFF ; les différences de capital/positions/historique persistent. Réactivations communes28octobre2025,24février2026,17juin2026, et épisodes additionnels SHADOW. En2026, B_SHADOW reprend+64,49% contre+66,61% pour le témoin mais avec environ moitié moins de capital initial ; les deux variantes anti-SL restent réellement plus faibles en pourcentage. Archives complémentaires : `phase-validation.json`, `post-off-normalized.png`, `protection-2026-summary.csv`, `post-mid2025-transitions.csv`. Aucun nouveau replay ou réglage modifié pour cet audit.
+
+<!-- Q051_PROTECTION_FEATURES_SENTINELS_20261118 -->
+
+# B / B + anti-SL — audit des indicateurs et titres sentinelles pour activer/désactiver la protection
+
+18novembre2026. Audit rétrospectif2021–septembre2026, sans nouveau replay économique. Variables Oracle173, B29/anti-SL44, distributions univers/TOP179/B10/anti-SL10, marché/SPY, taux mûrs d’amplitude et LONG, fréquence distincte deSL première séance, probabilités/AUC, risques/veto anti-SL et comptes témoins virtuels. 1815mesures de base,5581colonnes après scores/distributions/variations/moyennes ; mesures très corrélées, pas autant de sources indépendantes.
+
+Sentinelles :1759titres admissibles,8indicateurs,2cibles =28144tests. Sélection uniquement2021–2022 puis paniers5/10figés. AUC d’alerte du panier10 :0,85/0,85 sur les années de sélection, puis0,49 en2023,0,55 en2024,0,31 en2025,0,33 en2026. Panier10 de reprise :0,66/0,35/0,53/0,62 sur2023–2026. Pas de liste de titres fidèles confirmée, pas d’inversion du sens après lecture des mauvaises années.
+
+Cible principale : risque de baisse>5%du compte témoin anti-SL dans les20clôtures suivantes ; reprise =rendement20positif sans ce passage sous−5%. Ce ne sont ni des labels directionnels par titre ni un DD intraday. Taux LONG utilisés seulement àJ+11 ; SL première séance àJ+2 séparément ; données inconnues conservées. Découverte2021, confirmation2022, calibration2023, nomination2024 purgée des diagnostics connus seulement2025, évaluation2025–2026. Historique déjà exploré : aucun nouveau holdout indépendant.
+
+Six combinaisons de niveaux bruts ne déclenchent jamais après2023 : décalage de distribution/calibration. Quatre combinaisons de rangs passés253séances avec confirmation supplémentaire2023 ne passent pas la nomination2024 ; AUC combinée2025–2026 proche0,50. Une première analyse relative ayant retenu un compteur de couverture est exclue ; reprise qualifiée sans variables de disponibilité. Sensibilité macro :120colonnes supplémentaires à partir de VIX/VIX9D/VIX3M/VXN/MOVE/taux10ans, historique SQL1696dates2020–octobre2026, versions historiques non certifiées. Quatre règles supplémentaires, aucun candidat nommé. Contrôle final des14règles sur la nomination2024 purgée : zéro succès. Sensibilité5/10séances à variables/sens figés et comparaison des anciens basculements archivées.
+
+La combinaison relative illustrative manque la baisse fin2024–avril2025 puis se réactive9juillet2025. Les sentinelles ne corrigent pas ce calendrier. L’ancien contrôleur peut sortir sur une reprise positive mais trop tard ; quelques sorties positives ne suffisent pas à qualifier le rendement/DD.
+
+Inventaire SQL38tables en lecture seule : historiquesSEC significatifs présents (106836lignes/5720symboles avec disponibilité2020–octobre2026), mais signal fondamental dédié non testé avant qualification accession/versions/unités/prix ; options/borrow/documents observés surtout depuis septembre2026, consensus sans plage globale prouvée dans cet audit (requête bornée échouée), news/sentiment non assimilés à un historique PIT certifié. Ni absence de donnéesSEC ni pouvoir prédictif des tables brutes supposés. L’ancien inventaire macro partiel163dates est corrigé par le complémentSQL.
+
+Conclusion : **pas de combinaison suffisamment fiable trouvée pour remplacer le contrôleur, pas d’impossibilité générale démontrée**. Pas de nouveau seuil retenu pour expliquer uniquement2024/25.15tests ciblés passent, contrôles de préfixe et empreintes archivés. Aucun entraînementOracle/per-symbol, téléchargement, appelLLM, écritureSQL, ordre ou changement de production. Les témoins sources conservent leurs limites de prix révisés, univers contemporain et intraday partiel/repliOHLC.
+
+Rapport : `doc/ml/q051_protection_feature_audit_20261118.md`. Archives : `artifacts/research/us_q051_protection_feature_audit/20261118-v1`, dont `sentinel-stability.png`, `warning-timing-diagnostic.png`, `nomination-2024-purged.csv` et `final-audit-status.json`.
