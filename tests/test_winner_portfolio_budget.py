@@ -61,18 +61,23 @@ def test_invalid_settings_fail_closed(kwargs):
 def test_archived_popup_reports_comparable_daily_drawdowns():
     from ihm.components.winner_profile_comparison import reference_comparison
     table,models=reference_comparison()
-    assert len(table)==7 and len(models)==6
+    assert len(table)==8 and len(models)==6
     assert table.iloc[1]['Rendement (%)']==125.98
     assert table.iloc[2]['Rendement (%)']==150.90
     assert table.iloc[3]['Rendement (%)']==280.94
     assert table.iloc[4]['Rendement (%)']==129.06
     assert table.iloc[5]['Rendement (%)']==297.35
-    assert table.iloc[6]['DD sur clôtures (%)']==-25.36
-    assert pd.isna(table.iloc[6]['DD intraday (%)'])
+    assert table.iloc[6]['Rendement (%)']==303.52
+    assert table.iloc[6]['DD intraday (%)']==-34.98
+    assert table.iloc[6]['Trades gagnants (%)']==38.13
+    assert table.iloc[6]['Trades clôturés']==1356
+    assert table.iloc[7]['DD sur clôtures (%)']==-25.36
+    assert pd.isna(table.iloc[7]['DD intraday (%)'])
     from ihm.components.winner_profile_comparison import comparison_data,comparison_figure,CURVE_LABELS
     _,curves,_=comparison_data()
     assert list(curves)==list(CURVE_LABELS) and not curves.isna().any().any()
     assert curves.iloc[-1,2]==pytest.approx(10035.917949897084)
     assert curves.iloc[-1,3]==pytest.approx(15237.79291190506)
+    assert curves.iloc[-1,6]==pytest.approx(16140.820229817295)
     figure=comparison_figure(curves)
     assert [line.get_label() for line in figure.axes[0].lines]==list(CURVE_LABELS)

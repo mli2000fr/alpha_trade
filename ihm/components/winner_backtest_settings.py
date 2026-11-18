@@ -26,7 +26,7 @@ def initialize_reference_profile():
         apply_research_defaults(DEFAULT_PROFILE)
         st.session_state['bt_winner_profile_choice'] = DEFAULT_PROFILE
     if not st.session_state.get(DEFAULT_PROFILE_MARKER):
-        if st.session_state.get('bt_winner_settings_profile') in ('q088','q051','q051_vol20_regime'):
+        if st.session_state.get('bt_winner_settings_profile') in ('q088','q051','q051_vol20_regime','q051_top10','q051_b'):
             reset_execution_settings(DEFAULT_PROFILE)
             st.session_state['bt_winner_profile_choice'] = DEFAULT_PROFILE
         st.session_state[DEFAULT_PROFILE_MARKER] = True

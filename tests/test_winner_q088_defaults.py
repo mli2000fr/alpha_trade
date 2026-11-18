@@ -29,6 +29,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     from common.winner_pyramiding import WinnerPyramidingConfig
     from execution_engine.config import LeverageConfig
     from risk_management.config import RiskConfig
+    from modelFactory.oracle_path.directional_features import compact_columns
     from ihm.components import winner_backtest as ui
     from ihm.services.backtesting_runner import BacktestRunOptions,build_backtesting_command
     from backtesting.winner_campaign_replay import build_parser
@@ -38,8 +39,9 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     (root/'report.json').write_text(json.dumps(dict(status='completed',serving_ready=True,
         horizon=10,directional_models=True)))
     contract=dict(horizon=10,universe=[f'S{i}' for i in range(1790)],
-        training_config=dict(oracle_path_directional_enabled=True,data=dict(training_end_date='2024-12-31')),
-        directional_contract=dict(oracle_top_n=20,selected_n=5))
+        training_config=dict(oracle_path_directional_enabled=True,oracle_path_anti_sl_enabled=True,
+            data=dict(training_end_date='2024-12-31')),
+        directional_contract=dict(oracle_top_n=20,selected_n=5,feature_mode='compact_volatility'))
     folds={'2021-07-02':{'metrics':dict(fold_start='2021-07-02',
         train_available_max='2020-12-30',val_available_max='2021-07-01')}}
     policy=WinnerPyramidingConfig(enabled=True,stop_loss_pct=.07,horizon_sessions=20,
@@ -53,7 +55,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     monkeypatch.setattr(ui,'load_winner_pyramiding_config',lambda:policy)
     monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(root,contract,None,folds))
     monkeypatch.setattr('modelFactory.oracle_path.directional.load_manifest',lambda *a:
-        (dict(models=[dict(side='long',year=2025)]),'hash'))
+        (dict(models=[dict(side='long',year=2025)],features=compact_columns('compact_volatility')),'hash'))
     monkeypatch.setattr('ihm.services.queries.get_ml_training_batch_comments',lambda:{})
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:risk)
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:
@@ -66,7 +68,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
         st.session_state['result']=asdict(render_winner_backtest())
 
     at=AppTest.from_function(app)
-    # Fresh pages receive Q051, then Q088 remains explicitly selectable.
+    # Fresh pages receive B + anti-SL; other profiles remain selectable.
     at.session_state['bt_wp_sl']=9.
     at.session_state['bt_winner_q088_defaults_20261107']=True  # Original Q088 migrated, too.
     at.session_state['bt_wr_budget']=2.5
@@ -76,7 +78,8 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     at.run(timeout=30)
     assert not at.exception
     initial=at.session_state['result']
-    assert at.selectbox(key='bt_winner_profile_choice').value=='q051_top10'
+    assert at.selectbox(key='bt_winner_profile_choice').value=='q051_b_anti_sl'
+    assert any('+303,52 %' in message.value for message in at.info)
     assert initial['winner_top_n']==179 and initial['winner_per_symbol_top_long']==10
     assert initial['winner_per_symbol_min_long_probability']==.5
     assert initial['winner_per_symbol_min_long_auc']==.5
@@ -91,7 +94,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert not at.exception
     assert len(at.dataframe)>=1
     assert at.get('imgs')
-    assert len(at.dataframe[0].value)==7
+    assert len(at.dataframe[0].value)==8
 
     # Both new choices must reach the command, then reapply after manual edits.
     at.selectbox(key='bt_winner_profile_choice').select('q051_vol20_regime_top10').run(timeout=30)
@@ -151,7 +154,7 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert p['confirmation_bars']==0 and p['entry_valid_sessions']==1
     assert asdict(policy)==before_policy and asdict(risk)==before_risk
     assert at.selectbox(key='bt_winner_profile_choice').value=='q088'
-    assert len(at.selectbox(key='bt_winner_profile_choice').options)==8
+    assert len(at.selectbox(key='bt_winner_profile_choice').options)==9
     assert any('+35,13 %' in message.value for message in at.info)
     assert not any(b.key in ('bt_winner_reset_q088','bt_winner_reset_reference','bt_winner_reset_settings')
                    for b in at.button)
@@ -225,9 +228,17 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     assert at.number_input(key='bt_wr_gross').value==1.
     args=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**at.session_state['result']))[4:])
     assert args.per_symbol_top_long==10 and not args.drawdown_controller
+    at.selectbox(key='bt_winner_profile_choice').select('q051_b_anti_sl').run(timeout=30)
+    assert not at.exception
+    at.number_input(key=f'bt_per_symbol_top_long_{batch}').set_value(2).run(timeout=30)
+    at.number_input(key='bt_wr_gross').set_value(2.).run(timeout=30)
+    at.button(key='bt_winner_profile_reload').click().run(timeout=30)
+    assert not at.exception and at.session_state['result']['winner_per_symbol_top_long']==10
+    assert at.number_input(key='bt_wr_gross').value==1.
+    assert not at.session_state['result']['winner_drawdown_controller_enabled']
 
 
-@pytest.mark.parametrize('old_profile',['q088','q051','q051_vol20_regime'])
+@pytest.mark.parametrize('old_profile',['q088','q051','q051_vol20_regime','q051_top10','q051_b'])
 def test_old_research_default_migrates_once_without_overriding_later_selection(monkeypatch,old_profile):
     from ihm.components import winner_backtest_settings as settings
     from ihm.components.winner_backtest_profiles import Q088_MARKER
@@ -235,8 +246,8 @@ def test_old_research_default_migrates_once_without_overriding_later_selection(m
         Q088_MARKER:True,'bt_winner_settings_profile':old_profile,'bt_winner_profile_choice':old_profile,
         'bt_wr_gross':2.,'bt_wr_controller_enabled':True}
     monkeypatch.setattr(settings.st,'session_state',state)
-    assert settings.initialize_reference_profile()=='q051_top10'
-    assert state['bt_winner_profile_choice']=='q051_top10'
+    assert settings.initialize_reference_profile()=='q051_b_anti_sl'
+    assert state['bt_winner_profile_choice']=='q051_b_anti_sl'
     assert state['bt_wr_gross']==1. and not state['bt_wr_controller_enabled']
     settings.reset_execution_settings('q088')
     state['bt_winner_profile_choice']='q088'

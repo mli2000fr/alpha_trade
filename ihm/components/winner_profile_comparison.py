@@ -11,9 +11,11 @@ BASE=PROJECT/'artifacts/research/us_winner_continuous_q051_q088/20261108-v2'
 VARIANTS=PROJECT/'artifacts/research/us_q051_selection_variants/20261115-v1'
 CLASSIC=PROJECT/'artifacts/research/us_q051_classic_top10/20261115-v1'
 FEATURE_GROUPS=PROJECT/'artifacts/research/us_q051_feature_groups/20261116-lot1'
+ANTI_SL=PROJECT/'artifacts/research/us_q051_b_early_sl/20261116-v1'
 CURVE_LABELS=('Q051 témoin — TOP5','Volatilité 20 % + régime — TOP5',
               'Volatilité 20 % + régime — TOP10','Q051 témoin — TOP10',
-              'Témoin B — 24 variables, mêmes Oracle','B seul — 29 variables, TOP10','SPY')
+              'Témoin B — 24 variables, mêmes Oracle','B seul — 29 variables, TOP10',
+              'B + anti-SL témoin — TOP10','SPY')
 
 
 def comparison_data():
@@ -25,6 +27,7 @@ def comparison_data():
         (CURVE_LABELS[3],CLASSIC/'cases/TOP10/result',CLASSIC/'validation-independent.json'),
         (CURVE_LABELS[4],FEATURE_GROUPS/'variants/T0/cases/T0_SIMPLE/result',FEATURE_GROUPS/'validation.json'),
         (CURVE_LABELS[5],FEATURE_GROUPS/'variants/B/cases/B_SIMPLE/result',FEATURE_GROUPS/'validation.json'),
+        (CURVE_LABELS[6],ANTI_SL/'cases/SL10/result',ANTI_SL/'selection-validation.json'),
     ]
     rows=[];curves=[]
     for label,folder,validation in specifications:
@@ -36,6 +39,14 @@ def comparison_data():
             checks=[c for c in audit['checks'] if c['case']==case]
             if len(checks)!=1 or checks[0]['status']!='OBSERVED_PRICE_SCOPE_PASS_RESEARCH_ONLY':
                 raise ValueError(f'Qualification des prix archivée absente : {label}')
+        if folder.is_relative_to(ANTI_SL):
+            audit=read(ANTI_SL/'post-run-review.json')
+            checks=[c for c in audit['checks'] if c['case']=='SL10']
+            if (audit.get('status') not in ('ARITHMETIC_CONTROL_AND_SCOPE_CHECKED_RESEARCH_ONLY',
+                    'ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES') or len(checks)!=1
+                    or read(ANTI_SL/'oracle-oof-causality.json').get('status')!='PASS'
+                    or read(ANTI_SL/'selection-validation.json').get('no_refill') is not True):
+                raise ValueError(f'Contrôles de l’archive anti-SL absents ou invalides : {label}')
         r=read(folder/'report.json')
         equity=pd.read_csv(folder/'equity-daily.csv',index_col=0,parse_dates=True).iloc[:,0].astype(float)
         if equity.index.has_duplicates or not equity.index.is_monotonic_increasing:
@@ -74,16 +85,16 @@ def comparison_figure(curves):
     from matplotlib.figure import Figure
     figure=Figure(figsize=(12,6),layout='constrained')
     ax=figure.subplots()
-    colors=['#2455cc','#008f72','#ee8b22','#8c44ac','#b17b28','#ce3458','#737373']
+    colors=['#2455cc','#008f72','#ee8b22','#8c44ac','#b17b28','#ce3458','#009eb1','#737373']
     for label,color in zip(CURVE_LABELS,colors):
         ax.plot(curves.index,curves[label],label=label,color=color,linewidth=1.4)
-    ax.set_title('Q051 TOP5/TOP10, B seul et SPY — capital valorisé')
+    ax.set_title('Q051, B seul, B + anti-SL et SPY — capital valorisé')
     ax.set_ylabel('Capital ($), départ 4 000');ax.grid(alpha=.2)
     ax.legend(loc='upper left',fontsize=9)
     return figure
 
 
-@st.dialog('Q051, B seul, volatilité 20 % + régime et SPY',width='large')
+@st.dialog('Q051, B et B + anti-SL — comparaison avec SPY',width='large')
 def show_reference_comparison():
     try:
         table,curves,models=comparison_data()
@@ -117,6 +128,16 @@ def show_reference_comparison():
             'Son témoin apparié à 24 variables vaut +129,06 %, DD −39,12 %. Ces deux courbes utilisent les mêmes '
             'Oracle annuels entre elles, différents des archives Q051 précédentes : comparer B directement à son témoin apparié. '
             'Le profil charge les réglages du portefeuille ; les variables sont figées à l’entraînement du batch choisi.')
+        st.write('B + anti-SL témoin reprend B seul et les mêmes modèles Oracle/B : après le TOP10 LONG, '
+            'un modèle commun à 44 variables écarte les risques de SL première séance supérieurs au percentile 90 '
+            'de calibration, sans remplacer les titres exclus. Les dix séances sont une fenêtre passée de variables. '
+            'Résultat archivé : 16 140,82 $, +303,52 %, DD intraday −34,98 %, 38,13 % gagnants, 1 356 trades. '
+            'Le nouveau profil exige une tête anti-SL native ; il ne recharge pas automatiquement les poids de recherche.')
+        anti_review=json.loads((ANTI_SL/'post-run-review.json').read_text(encoding='utf-8'))
+        case=next(c for c in anti_review['checks'] if c['case']=='SL10')
+        st.caption(f'Archive anti-SL : contrôle arithmétique avec réserves, '
+            f'{case["event_label_mismatches"]} écart(s) de label première séance sur {case["known_event_labels"]} trades qualifiés ; '
+            f'{len(anti_review.get("price_reserves",[]))} réserve(s) de prix. Historique non certifié PIT, sans parité live complète.')
         st.write('SPY : achat conservé sur toute la période, sans levier, dividendes ni frais. '
             'Les courbes montrent des capitaux valorisés, y compris les positions encore ouvertes.')
         st.caption('Ces résultats utilisent les modèles annuels suivants. Choisir ce profil ne remplace pas le modèle ni '
