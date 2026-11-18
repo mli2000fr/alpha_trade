@@ -24,6 +24,7 @@ FEATURES = ['return_5d','return_10d','return_20d','momentum_60','rsi_14','adx_14
 DELTAS = ['return_5d','rsi_14','vol_ratio_20_60']
 INPUTS = FEATURES + [c+'_delta5' for c in DELTAS]
 SOURCE = 'oracle_path_long'
+CONFIG_READER_VERSION = 2  # v2 consumes oracle_top_fraction before constructing the frozen Settings.
 
 
 @dataclass(frozen=True)

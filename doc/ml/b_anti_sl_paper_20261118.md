@@ -2,6 +2,8 @@
 
 18 novembre2026. Configuration et raccordement hors ligne terminés. Aucun ordre, appel fournisseur, écritureSQL, entraînement ou redémarrage de watcher lancé pour cette modification. Le batch de modèles fourni par l’utilisateur est encore en entraînement ; sa consommation est bloquée jusqu’à publication de tous les artefacts.
 
+**Mise à jour ultérieure : entraînement terminé et contrat vérifié en lecture seule.** Le batch dispose notamment de1761modèlesLONG et1761SHORT pour2026, ainsi que de la tête anti-SL2026 disponible au31décembre2025. Validation : `artifacts/operations/b_anti_sl_profile_setup/20261118-v1/model-ready-validation.json`. Il peut désormais être utilisé au prochain ML Predict ; aucune prédiction ni exécution n’a été lancée par cette vérification.
+
 ## Réglage principal dans config.yaml
 
 ```yaml
@@ -84,3 +86,11 @@ Le bandeau de la page Pipeline décrit le profil quotidien actif. Les lancements
 - anciens profils lisibles et non altérés, entraînement incomplet refusé avant tout appel broker.
 
 Prévol local : `artifacts/operations/b_anti_sl_profile_setup/20261118-v1/validation.json`. Il confirme la configuration, les déclarations B/anti-SL du modèle et le statut d’entraînement en cours, sans requêteSQL ni fournisseur. La mise en service effective requiert la fin de l’entraînement et un prochain lancement quotidien avec ses données fraîches.
+
+## Fin d’entraînement et rafraîchissement de la page
+
+Le batch a ensuite terminé : OracleH10/173variables/10folds,10132modèles directionnels B29 (5066LONG et5066SHORT sur2025–2027), cinq têtes anti-SL44variables sur2023–2027. Les14928branches et deux années anti-SL non qualifiées sont documentées comme skips, pas comme des modèles manquants qu’il faudrait fabriquer. L’usage courant prend les têtes de sa propre année et leur disponibilité passée.
+
+Un processus Streamlit déjà ouvert pouvait conserver le lecteur de configuration antérieur à `oracle_top_fraction`, et transmettre cette nouvelle clé directement à l’ancienne classeSettings. La page utilise désormais un lecteurIHM versionné : il recharge une seule fois le module de configuration lorsque sa version en mémoire est ancienne, puis appelle le lecteur qui consomme la fraction avant de construireSettings. Aucun redémarrage de processus ni modification d’un contrat de modèle. Les valeurs invalides restent refusées ; aucun masquage des clés inconnues.
+
+16tests ciblés passent, dont reproduction exacte de l’ancienne erreur en mémoire, rafraîchissement puis résolution1790→179, absence de rechargement répétitif et rendu réel du formulaire Pipeline avec H10/H15/H20. Actualiser la page permet de charger ce correctif ; une réinstallation du batch n’intervient pas dans ce problème de mémoire de l’interface.
