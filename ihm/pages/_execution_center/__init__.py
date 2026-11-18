@@ -3570,6 +3570,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             help="Avec Oracle parcours H10/H15/H20 : branches par titre de rentabilité LONG et SHORT au même horizon, puis classement LONG. Sans parcours : ancien bundle directionnel H20.",
         )
         ml_oracle_path_directional_enabled = bool(ml_oracle_path_model_only and ml_directional_profiles_enabled)
+        from ihm.components.oracle_path_training_features import render_volatility_features
+        ml_oracle_path_directional_feature_mode=render_volatility_features(ml_oracle_path_directional_enabled)
+        from ihm.components.oracle_path_training_features import render_anti_sl_features
+        ml_oracle_path_anti_sl_enabled=render_anti_sl_features(ml_oracle_path_directional_enabled,
+            ml_oracle_path_directional_feature_mode,ml_oracle_horizon)
         if ml_oracle_path_directional_enabled:
             _path_directional=path_directional_settings(horizon=ml_oracle_horizon)
             st.info(f'Même batch : Oracle parcours H{ml_oracle_horizon} + modèles annuels LONG et SHORT par titre en H{ml_oracle_horizon}. '
@@ -5312,6 +5317,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_oracle_path_model_only=bool(ml_oracle_path_model_only),
             ml_oracle_path_backend=ml_oracle_path_backend,
             ml_oracle_path_directional_enabled=ml_oracle_path_directional_enabled,
+            ml_oracle_path_directional_feature_mode=ml_oracle_path_directional_feature_mode,
+            ml_oracle_path_anti_sl_enabled=ml_oracle_path_anti_sl_enabled,
             ml_oracle_barrier_model_only=bool(ml_oracle_barrier_model_only),
             ml_oracle_barrier_tp_pct=_barrier_config.take_profit_pct if _barrier_config else None,
             ml_oracle_barrier_sl_pct=_barrier_config.stop_loss_pct if _barrier_config else None,

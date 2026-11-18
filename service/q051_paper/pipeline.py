@@ -101,6 +101,10 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
         selected=selected.symbol.tolist(), protocol_sha256=digest(root/'protocol.json'),
         directional_manifest_sha256=digest(root/'directional/manifest.json'),
         selection_sha256=digest(folder/'selection.parquet'))
+    from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
+    if anti_enabled(protocol):
+        report.update(anti_sl_manifest_sha256=digest(root/'anti_sl/manifest.json'),
+            anti_sl_excluded=int(ranked.anti_sl_rejected.sum()),anti_sl_automatic=True)
     write(folder/'selection.json', report)
     write(folder/'seal.json', dict(report_sha256=digest(folder/'selection.json')))
     LOG.info('Q051 : TOP%d Oracle → %d LONG (TOP5 puis score>0.50/AUC>=0.50, sans remplissage)',
@@ -114,6 +118,9 @@ def qualified(run_id, *, batch, day, artifacts_dir):
     seal = json.loads((folder/'seal.json').read_text())
     root, protocol = contract(batch, artifacts_dir, day)
     validate_frozen(report['profile'])
+    from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
+    if anti_enabled(protocol) and report.get('anti_sl_manifest_sha256')!=digest(root/'anti_sl/manifest.json'):
+        raise ValueError('Q051 : manifeste anti-SL différent de la sélection publiée')
     if (report['status'] != 'COMPLETED' or report['trade_date'] != str(day) or report['batch_id'] != batch
             or seal['report_sha256'] != digest(folder/'selection.json')
             or report['selection_sha256'] != digest(folder/'selection.parquet')

@@ -68,6 +68,11 @@ def load_contract(artifacts_dir, batch_id):
         load_manifest(root)
         if report.get('directional_manifest_sha256')!=digest(root/'directional/manifest.json'):
             raise ValueError('Manifeste directionnel différent du rapport publié')
+    from .anti_sl import enabled as anti_sl_enabled,load_manifest as load_anti_sl
+    if anti_sl_enabled(protocol):
+        load_anti_sl(root)
+        if report.get('anti_sl_manifest_sha256')!=digest(root/'anti_sl/manifest.json'):
+            raise ValueError('Manifeste anti-SL différent du rapport publié')
     requested=protocol.get('training_backend')
     if requested is not None:
         if (requested not in CHOICES or protocol.get('backend')!=DECLARATIONS[requested]

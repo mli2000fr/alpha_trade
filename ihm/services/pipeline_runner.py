@@ -416,6 +416,8 @@ class PipelineLaunchOptions:
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_oracle_path_model_only: bool = False  # modèle parcours H10/H15/H20 distinct ; défaut IHM True
     ml_oracle_path_directional_enabled: bool = False
+    ml_oracle_path_directional_feature_mode: str = 'compact'
+    ml_oracle_path_anti_sl_enabled: bool = False
     ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
@@ -2616,9 +2618,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if options.ml_directional_profiles_enabled:
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
             from modelFactory.oracle_path import validate_horizon
+            if options.ml_oracle_path_anti_sl_enabled and (not options.ml_oracle_path_directional_enabled
+                    or options.ml_oracle_horizon!=10 or options.ml_oracle_path_directional_feature_mode!='compact_volatility'):
+                raise ValueError('Anti-SL : bundle Oracle H10 avec variables per-symbol B requis.')
             command.extend(["--oracle-path-model-only", "--oracle-horizon", str(validate_horizon(options.ml_oracle_horizon))])
             if options.ml_oracle_path_directional_enabled:
                 command.append('--oracle-path-directional')
+                mode=options.ml_oracle_path_directional_feature_mode
+                if mode not in ('compact','compact_volatility','oracle'):
+                    raise ValueError('Variables per-symbol du bundle Oracle invalides.')
+                if mode!='compact':command.extend(['--oracle-path-directional-features',mode])
+            if options.ml_oracle_path_anti_sl_enabled:command.append('--oracle-path-anti-sl')
             if options.ml_oracle_path_backend is not None:
                 command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":

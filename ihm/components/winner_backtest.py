@@ -58,6 +58,7 @@ def render_model_selection():
             report=json.loads(path.read_text(encoding='utf-8'))
             if report.get('status')=='completed' and report.get('serving_ready') is True:
                 badge=' + per-symbol LONG/SHORT' if report.get('directional_models') else ' — Oracle seul'
+                if report.get('anti_sl_models'):badge+=' + anti-SL automatique'
                 batch_id=path.parent.parent.name
                 comment=comments.get(batch_id)
                 prefix=f'{comment} — ' if comment else ''
@@ -70,6 +71,11 @@ def render_model_selection():
     batch=st.selectbox('Modèle Oracle parcours',list(choices),format_func=choices.get,key='bt_winner_batch')
     try:
         _,contract,_,folds=load_contract(MODEL_ROOT,batch)
+        from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
+        anti_active=anti_enabled(contract)
+        if anti_active:
+            st.info('Ce batch contient une tête anti-SL : veto automatique après le classement LONG, sans remplacement. '
+                    'Compléter ML Predict pour disposer des scores anti-SL aux dates du replay.')
         bundle=enabled(contract)
         manifest=load_manifest(MODEL_ROOT/batch/'oracle_path')[0] if bundle else None
     except (OSError,ValueError) as exc:
@@ -79,8 +85,10 @@ def render_model_selection():
     pool=contract.get('directional_contract',{}).get('oracle_top_n',20)
     from ihm.components.winner_backtest_profiles import initialize_research_selection
     initialize_research_selection(batch,bundle)
+    selection_key=f'bt_winner_per_symbol_long_{batch}'
+    if anti_active:st.session_state[selection_key]=True
     active=st.checkbox('per-symbol',
-        value=bundle,disabled=not bundle,key=f'bt_winner_per_symbol_long_{batch}',
+        value=bundle,disabled=not bundle or anti_active,key=selection_key,
         help='Classe les candidats Oracle avec les probabilités LONG/SHORT des modèles par titre du même batch. '
              'Les nombres et directions choisis ici restent propres à ce backtest.')
     active=bool(bundle and active)
@@ -164,6 +172,11 @@ def render_winner_backtest():
     st.caption('Simulation isolée : base en lecture seule, rapports et caches dans son dossier. '
                'Les nouveaux runs peuvent fonctionner en parallèle du pipeline. Les anciens runs gardent leur verrou initial.')
     batch,contract,folds,manifest,directional_bundle,per_symbol_selection=render_model_selection()
+    from ihm.components.winner_backtest_profiles import validate_profile_model
+    try:
+        validate_profile_model(profile,contract,manifest,directional_bundle)
+    except ValueError as exc:
+        st.error(str(exc));st.stop()
     options_config=load_options_filter_config()
     if directional_bundle:
         st.session_state['bt_winner_options_filter']=False
@@ -214,7 +227,7 @@ def render_winner_backtest():
                    'doit être actif sur le compte concerné. En mode '
                    'SIP retardé, les bougies ne sont utilisables qu’après le délai et l’ordre reste '
                    'limité au plafond accepté par le risque. Un cours qui dépasse ce plafond peut ne pas être acheté.')
-    with st.expander('Budget de volatilité du portefeuille et régime SPY',expanded=profile=='q051_vol20_regime'):
+    with st.expander('Budget de volatilité du portefeuille et régime SPY',expanded=profile in ('q051_vol20_regime','q051_vol20_regime_top10')):
         portfolio_vol=st.checkbox('Limiter les nouveaux achats par la volatilité du portefeuille',
             value=False,key='bt_wp_portfolio_vol_enabled')
         vol_target=float(st.number_input('Cible de volatilité annualisée du portefeuille (%)',

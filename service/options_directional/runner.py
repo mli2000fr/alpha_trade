@@ -83,6 +83,8 @@ def load_inputs(engine, *, batch_id, trade_date, symbol_source, capital_preset_k
     # Validate the serving contract without a historical loader that reads labels
     # or creates missing tables on read errors. This service issues SELECT only.
     root, protocol, _, folds = load_contract(artifacts_dir, batch_id)
+    from modelFactory.oracle_path.anti_sl import require_bundle_route
+    require_bundle_route(protocol)
     profile_hash = file_digest(root/'feature_profile.json')
     day = date.fromisoformat(str(trade_date))
     with engine.connect() as conn:

@@ -1,5 +1,250 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-15 — Q051 simple bleu, TOP10 LONG contre TOP5 (+206,51 %)
+
+**TERMINÉ ET VALIDÉ — PLUS DE RENDEMENT, DD PLUS PROFOND.** Demande portant
+sur le Q051 simple de la capture, sans vol20/cov60, filtre SPY ou B4/DD15.
+2021–1 octobre 2026, 4 000 USD continus, mêmes six modèles annuels H10,
+TOP10 % Oracle (179) → TOP5 ou TOP10 LONG, score >0,50 / AUC calibration ≥0,50,
+SL5/open11, entrée daily J+1 sans confirmation, position complète, risque
+1,25 %, poids20 %, achats1×/capacité margin2×, mêmes contraintes et frais8pb.
+Le TOP5 est rejoué en parallèle pour contrôler les évolutions d'implémentation
+depuis l'archive initiale : **+206,51 % / DD−36,89 %** et toutes ses 1 443
+clôtures de capital sont reproduits à l'identique.
+
+| Cas | Capital final USD | Rendement | DD maximal | Trades | Gagnants |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TOP5 témoin | 12 260,32 | +206,51 % | −36,89 % | 1 234 | 35,01 % |
+| TOP10 | 15 237,79 | +280,94 % | −40,45 % | 1 471 | 35,62 % |
+
+Exposition moyenne83,43→88,72 %, capital engagé moyen5 461,32→7 187,51 USD,
+frais2 024,07→2 741,00 USD. TOP10 ajoute74,44points de rendement mais3,56points
+de DD ; profit factor1,19→1,18. DD annuels tous plus profonds avec TOP10,
+2026 partiel +7,87 % contre +39,50 %. Aucun avantage universel ni amélioration
+importante du taux gagnant. Validation indépendante PASS des configurations,
+sources, comptabilité, frais, DD, choix/chronologie des entrées et open11 ;
+5 811 fichiers de marché revérifiés. Réutilisation des sélections déjà
+validées :6 073 /9 890signaux, sans remplissage. Pas de nouveau modèle,
+Predict, fournisseur/LLM, SQLwrite, ordre ou paramètre de production modifié.
+Archives partielles5m/repliOHLC, univers rétrospectif et période déjà étudiée.
+Historiques `20261115_q051_classic_control_top5` et
+`20261115_q051_classic_top10`.
+[Protocole, courbes et résultats annuels](q051_simple_top10_20261115.md).
+
+## 2026-11-15 — Q051 vol20/régime, TOP10 LONG ou score LONG >0,60
+
+**TERMINÉ ET VALIDÉ — TOP10 AMÉLIORE RENDEMENT ET DD SUR CETTE PÉRIODE.**
+Même témoin annuel causal 2021–1 octobre 2026, 4 000 USD continus, TOP10 %
+Oracle H10 (179/1 790), AUC de calibration ≥0,50 inchangée. Deux variantes
+indépendantes : TOP10 LONG au lieu de TOP5, ou TOP5 avec score strictement
+>0,60 au lieu de >0,50. Portefeuilles entièrement rejoués ; configurations
+numériques de capital, protections et risque identiques au témoin : SL5/open11,
+position complète, entrée journalière J+1, vol20/cov60/régime, plafond achats1×,
+sans B4/DD15, TP, trailing, confirmation, facteurs, corrélation ou filtre options/GPT.
+
+Sélections reproduites/comptées indépendamment : 6 073 signaux témoin,
+9 890 TOP10, 3 342 score>0,60. Aucun remplissage après rejet. Résultats :
+
+| Variante | Capital final USD | Rendement | DD max intraday | Trades | Gagnants |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Référence TOP5 / >0,50 | 9 039,00 | +125,98 % | −24,29 % | 940 | 36,17 % |
+| TOP10 / >0,50 | 10 035,92 | +150,90 % | −17,58 % | 1 112 | 36,33 % |
+| TOP5 / >0,60 | 8 398,68 | +109,97 % | −20,29 % | 615 | 36,42 % |
+
+Exposition moyenne 44,76 / 45,67 / 33,43 % ; frais 862,12 / 923,44 / 603,23 USD.
+TOP10 gagne 24,92 points de rendement et réduit le DD de 6,71 points, sans
+amélioration importante du taux gagnant. Avantage annuel non uniforme : moins
+bon en 2024, meilleur en 2025–2026. Pas de preuve prospective/robustesse nouvelle.
+Validation indépendante PASS des sélections, configurations, capital, P&L,
+frais, DD et chronologie J+1/open11, 55 tests ciblés passent. Prix/rapports
+figés, pas d'entraînement, nouveau Predict, fournisseur/LLM, SQLwrite, ordre
+ou réglage de production modifié. Limites intraday/secteurs/univers rétrospectif
+du témoin maintenues. Import IHM finalisé séparément après incident de statut,
+sans toucher aux résultats économiques ; reçus d'incident conservés.
+Historiques `20261115_q051_vol20_top10_score050` et
+`20261115_q051_vol20_top5_score060`. Courbe capital/DD, données détaillées et
+ventilations annuelles sous `artifacts/research/us_q051_selection_variants/20261115-v1/`.
+[Fonctionnement détaillé de Q051 et résultats complets](../Q051.md).
+Variables vérifiées : Oracle 173, per-symbol LONG/SHORT 24 par branche.
+
+## 2026-11-15 — Q051 vol20 + régime, sortie H5 contre H10
+
+**TERMINÉ ET VALIDÉ — H5 AUGMENTE LE TAUX GAGNANT MAIS DÉGRADE RENDEMENT/DD.**
+Contrefactuel du témoin annuel causal 2021–1 octobre 2026, 4 000 USD continus,
+mêmes 6 073 signaux TOP10 % Oracle → TOP5 LONG per-symbol, score >0,50 et
+AUC de calibration ≥0,50. Unique différence de configuration : détention
+10 →5 séances, vente open6 au lieu d'open11. Modèles H10 conservés, SL5,
+sans TP/trailing, position complète, entrée openJ+1, budget vol20/cov60 et
+régime, plafond d'achat 1×, B4/DD15 désactivés, frais 8pb par opération.
+Portefeuille entièrement rejoué avec capital libéré par les sorties.
+
+H5 : **6 523,27 USD / +63,08 % / DD −32,17 % / 1 240 trades / 44,27 % gagnants**,
+contre H10 : **9 039,00 USD / +125,98 % / DD −24,29 % / 940 / 36,17 %**.
+Gain moyen gagnant 40,63 contre 64,42 USD, frais 1 247,35 contre 862,12 USD.
+Engagement moyen 39,91 contre 44,76 %. H5 perd 21,42 % en 2025 contre +1,84 %
+au témoin. DD H5 du sommet du 29 novembre 2024 au creux du 20 novembre 2025.
+Les 711 sorties temporelles sont vérifiées à open6, 480 en 5m qualifié et
+231 sur repli journalier. Validation indépendante PASS des frais, du capital,
+du DD et des prix/horaires, 16 tests natifs ciblés passés. Couverture intraday
+partielle identique en méthode au témoin ; résultat exploratoire sur période
+déjà étudiée, aucune configuration de production modifiée. Aucun entraînement,
+nouveau Predict, fournisseur, LLM, SQLwrite ou ordre. Historique IHM
+`20261115_q051_vol20_regime_h5`.
+[Protocole, résultats annuels et limites](q051_vol20_regime_h5_20261115.md).
+
+## 2026-11-15 — CALL/PUT + OI, couverture et direction sur TOP10 % Oracle puis TOP5 LONG
+
+**AUDIT TERMINÉ — PETIT SIGNAL SUR ORACLE H5, AUCUN GAIN ROBUSTE APRÈS TOP5.**
+Piste abandonnée par l'utilisateur le 15 novembre : pas de raccordement du
+filtre options à Q051 ni de nouvelle optimisation de cette piste.
+Univers tradable figé de 1 790 titres : snapshots reçus au moins une fois pour
+1 652 (92,29 %), barres options 30Min pour 1 615 (90,22 %). Score combiné
+qualifié au moins une fois pour 1 024 (57,21 %), moyenne quotidienne 12,21 %
+sur 45 séances ; dernière séance du 13 novembre : 90 (5,03 %) avec lecture
+avant décision ASOF72h, contre zéro avec le lecteur natif. Défaut identifié :
+réception après minuit NY rejetée même avant la décision suivante. Correction
+de qualification isolée à la recherche, production inchangée.
+
+Modèle annuel H10 db80b0, données d'entraînement arrêtées fin 2025 ; classements
+historiques reconstruits en novembre, pas un suivi prospectif. Croisement
+options/rangs sur 23 dates du 14 septembre au 14 octobre ; absence de scores
+de ce batch du 15 octobre au 12 novembre, aucune disponibilité inventée.
+TOP179 Oracle : 848 cas couverts, 397 retenus ; direction dominante pendant
+H5 **50,24 → 55,67 %**, H10 **47,82 → 51,64 %**, AUC **0,561 / 0,567**.
+Trades LONG indépendants SL5, frais 8pb par côté, open6/open11 : taux gagnants
+**42,81 → 46,85 % / 31,72 → 31,99 %** sur dates communes. Pas un rendement
+de portefeuille Winner. TOP5 per-symbol : 36 cas couverts, dix retenus pour
+huit sociétés, AUC **0,500 / 0,533** ; résultats trop petits et sensibles à la
+couverture, taux gagnants retenus inférieurs à ceux des 155 TOP5 complets.
+Contrôles sans chevauchement non concluants après per-symbol. Aucun filtre
+ajouté à Q051. 66 exports bornés/scellés sans troncature, validation indépendante
+PASS, quatre tests ciblés, zéro appel fournisseur/LLM, entraînement, nouvelle
+inférence, écriture SQL ou ordre.
+[Couverture, méthode, comparaisons et limites](options_top10pct_top5_h5_h10_20261115.md).
+
+## 2026-11-15 — Après SL5, retours au-dessus du prix d'achat à H10
+
+**AUDIT DESCRIPTIF TERMINÉ, AUCUNE SUPPRESSION DU SL SIMULÉE.** Q051 vol20/régime
+annuel2021–1octobre2026 : sans TP,139/544stops (25,55 %) sont positifs à la
+clôture H10 ; avec TP20,156/577 (27,04 %). À open11 :148/544 (27,21 %) et
+168/577 (29,12 %). Positif=cours>achat initial, brut, pas simplement>prix du stop.
+Tous les cours d'échéance observés. Pics au-dessus de l'achat à un moment du
+parcours :98,16/98,44 %, incluant les mouvements avant SL et même minimes,
+donc pas un taux de récupération après stop. Sur des séances postérieures au
+jour du stop,49,08/52,34 % repassent l'achat avantH10, borne inférieure excluant
+le jour même. Moyennes H10 de tous les stoppés−4,33/−4,18 %. Ne démontre pas
+qu'ignorer le stop améliore le portefeuille. ValidationPASS1 121trades, prix
+figés complétés uniquement pour les dernières échéances depuis caches de prix
+qualifiés, zéro appel externe/SQLwrite/ordre ou changement de configuration.
+[Détail des définitions, observations et limites](q051_stops_revenus_positifs_h10_20261115.md).
+
+## 2026-11-15 — Q051 vol20 + régime, TP20 contre absence de TP
+
+**TERMINÉ — TP20 N'AMÉLIORE PAS LE COMPROMIS RENDEMENT/DD.** Unique paramètre
+modifié, TP null →20 %. Même référence annuelle
+causale2021–1 octobre2026, 4 000USD continus, TOP179→TOP5 per-symbol avant seuils
+score>.50/AUC≥.50, mêmes6 073signaux, SL5/open11, vol20/cov60/régime, frais8pb.
+Pas de Global, nouveau modèle ou changement des autres contrôles de risque.
+Replay de tout le portefeuille avec réutilisation du capital, pas un plafonnement
+des seules anciennes sorties H10. STOP prioritaire lors de collision SL/TP dans
+une même bougie sans ordre connu. Configuration témoin et seule différenceTP
+vérifiées ;31tests de protection passent. Résultat TP20 : **6 909,46USD /
++72,74 % / DD−21,85 % / 990trades / 35,05 %gagnants**, contre9 039,00USD /
++125,98 % / DD−24,29 % / 940trades / 36,17 %gagnants pour le témoin sans TP.
+77sorties TP dont13gaps plafonnés selon le moteur conservateur ;336sorties
+temporelles et577stops. Engagement moyen43,83 % contre44,76 %. Perte de53,24points
+de rendement pour2,44points de DD en moins. Gains moyens55,77/64,42USD et pertes
+moyennes−25,92/−28,04USD (TP20/témoin). Validation indépendante PASS sur1 443séances,
+frais, comptabilité, configurations, TP réellement exécutés et historique IHM.
+Comparaison exploratoire sur la période déjà auditée, modèles annuels causaux
+mais choix TP20 après observation des pics ; couverture5m partielle conservée.
+Historique `20261115_q051_vol20_regime_tp20`. Aucun changement PAPER ni appel externe.
+[Protocole et suivi](q051_vol20_regime_tp20_20261115.md).
+
+## 2026-11-15 — Diagnostic des sorties H10 de Q051 vol20 + régime
+
+**AUDIT DESCRIPTIF TERMINÉ, PAS UNE NOUVELLE STRATÉGIE.** Référence annuelle
+causale 2021–1 octobre 2026 : 396 sorties open11 sur 940 trades clôturés,
+193 symboles. Rendement net par trade : moyenne **+8,68 %**, médiane **+7,14 %**,
+minimum−5,37 %, maximum+42,11 %. Pic de prix pendant la détention jusqu'à la
+vente : moyenne **+13,83 %**, médiane **+11,63 %**, maximum+46,43 %. Pic strict
+sur les dix séances hors ouverture de vente : moyenne+13,69 %, médiane+11,55 %.
+340/396 gagnants (85,86 %) dans ce groupe conditionné à l'absence de sortie
+sur stop ; ne remplace pas le taux global36,17 % et ne prouve pas l'intérêt
+d'un TP. Même mélange 5m qualifié/repli daily que le replay, aucun cours
+postérieur à la vente utilisé. Source et calendrier vérifiés, P&L réconcilié.
+Zéro SQLwrite, téléchargement, ordre ou changement de configuration.
+[Distributions, ventilation annuelle et méthode](q051_h10_sorties_temporelles_20261115.md).
+
+## 2026-11-15 — Global Ranking H10 dans Q051 vol20 + régime
+
+**TERMINÉ — SIX GLOBAL ANNUELS ENTRAÎNÉS, TROIS REPLAYS, VALIDATION PASS.**
+Comparer le TOP5 per-symbol témoin, le TOP5 Global H10 et la fusion des rangs
+50/50, dans le même TOP10 % Oracle ; seuils per-symbol LONG>0,50 et AUC de
+calibration≥0,50 maintenus après sélection, sans remplissage. Même Q051
+vol20/régime/SL5/open11, capital 4 000 USD continu entre 2021 et le 1 octobre
+2026. Global absent des modèles/scores actuels : six nouveaux LambdaRank H10,
+backend et réglages figés avant test ; validation chronologique passée/purgée.
+Les scores ne sont pas des probabilités de hausse. Résultats :
+
+| Classement | Capital final | Rendement | DD max intraday | Trades / gagnants | Engagement moyen |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Per-symbol témoin | 9 039,00 USD | +125,98 % | −24,29 % | 940 / 36,17 % | 44,76 % |
+| Global H10 | 4 007,43 USD | +0,19 % | −17,70 % | 155 / 30,32 % | 9,95 % |
+| Fusion 50/50 | 8 366,86 USD | +109,17 % | −23,54 % | 674 / 35,31 % | 36,45 % |
+
+**NO-GO pour ajouter ce Global à la référence.** La fusion améliore 2021/2023,
+mais dégrade les quatre autres années. Elle perd 16,80 points de rendement
+pour seulement 0,75 point de DD en moins et réduit le taux gagnant. Le Global
+seul investit beaucoup moins sans avantage économique. Aucun réglage de poids
+recherché après résultats. Témoin reproduit exactement, 16 scores Global absents
+sur 258 297 lignes Oracle sans modifier la sélection du témoin sur cohorte commune.
+Onze tests passent ; causalité des six modèles, comptabilité et parité IHM PASS.
+Modèles hors échantillon en chronologie ; univers contemporain, prix révisés et
+replis OHLC daily gardés comme limites, sans certification PIT/live complète.
+Trois résultats dans l'historique `20261115_q051_global_*`, archives sous
+`artifacts/research/us_q051_global_rank_h10/20261115-v1/`. Zéro appel fournisseur,
+broker ou SQLwrite, aucun changement du pipeline PAPER.
+[Protocole et suivi](q051_global_rank_h10_comparaison_20261115.md).
+
+## 2026-11-15 — Q051 vol20 + régime, même batch c59bed sur 2021–2026
+
+**TERMINÉ — RÉTROSPECTIF AVEC ANTICIPATION EXPLICITEMENT AUTORISÉE, NON HORS ÉCHANTILLON.**
+Demande utilisateur après constat que `model-factory-20261114122842-c59bed`
+ne possède pas les branches annuelles LONG2021–2024 et que son Oracle causal
+commence en2022. Même dernier fold Oracle et même dernière tête LONG par titre
+sur toute la période2021–13novembre2026, sans réentraînement ni changement de dates.
+Les poids et AUC peuvent être futurs par rapport aux décisions historiques :
+ce biais reste nommé dans les fichiers, le rapport et l'historique IHM.
+TOP179Oracle→TOP5LONG avant seuils score>0,50/AUCcalibration≥0,50, sans remplissage.
+Q051 natif :4 000USD continus, SL5/open11 sans TP/trailing/confirmation/renforcement,
+risque1,25 %, poids20 %, achats1×/capacité margin2×, minimum50USD, vol20/cov60,
+SPYJ>98 %SMA200, B4/DD15/facteurs/secteurs/corrélation/options/GPT désactivés.
+
+**11 630,38USD finaux / +190,76 % / DDintraday−28,04 % / 979trades,
+365gagnants–614perdants / 37,28 %gagnants.** Moyennes gagnant/perdant
++69,43/−29,48USD ; détention14,50/5,36jours calendaires. Engagement moyen
+2 607,40USD (45,49 %equitycourante), maximum8 487,22USD ; frais947,85USD,
+intérêts0. Années2021→2026 :+15,90/−13,03/+28,91/+22,05/+6,43/+72,26 %,
+2026 partiel jusqu'au13novembre, sans remise à zéro annuelle.
+
+Première tentative arrêtée au19octobre2026 sur TKOMY détenu sans cours daily.
+Alpaca SIP bloqué, Yahoo200 :20séances manquantes qualifiées en USD avec7ancrages
+OHLC concordants (écart relatif maximal3,4e−8), aucun split, aucune ligne canonique
+écrasée. Complément local explicite `yahoo_daily_research`, pas du SIP ni une preuve
+PIT ancienne. Scores réutilisés ; simulation entièrement rejouée, pas de suppression
+de position ni de prix inventé. Deux GET de réparation, aucun appel broker ni SQLwrite.
+Statut de couverture incomplète maintenu :19dates Oracle sous93 % et repli OHLCdaily.
+
+Validation finalePASS sur1 474séances, comptes de trades, rendement continu/annuel,
+parité IHM et disclosure d'anticipation ; mêmes poids vérifiés sur2 619 007lignes,
+7 098signaux. Suites initiale16tests et reprise14tests passent. Modèles d'origine,
+contrôles causaux standards et pipeline PAPER inchangés ; aucun score rétrospectif
+non causal injecté dans les tables servables. Historique
+`20261114_q051_c59bed_retrospective`, racine
+`artifacts/research/us_q051_same_batch_retrospective/20261114-v1/`.
+[Protocole, limites, reprise et bilan annuel](q051_c59bed_retrospectif_20261114.md).
+
 ## 2026-11-14 — Déploiement PAPER de la référence Q051 vol20 + régime
 
 **RACCORDEMENT ACTIVÉ — VALIDATION TECHNIQUE, PAS DE NOUVEAU RENDEMENT.**
@@ -8411,3 +8656,885 @@ Artefacts `oracle_barrier`, sans remplacer Oracle terminal/parcours ni leurs tab
 Case Pipeline décochée par défaut, recherche non servable, aucun ordre ni campagne
 utilisateur lancé. Validation technique sur données synthétiques seulement.
 [Guide et protocole](oracle_barrier_training.md).
+
+<!-- RESULTS_173_20261116 -->
+
+# Q051 TOP10 — résultats 24 contre 173 variables
+
+2021-01-01–2026-10-01 ; 4 000 $ continus ; modèles annuels hors entraînement ; LONG uniquement.
+Oracle TOP10 % (179) → TOP10 LONG ; score >0,50 ; AUC de calibration ≥0,50 ; sans remplacement.
+SL5/open11 ; pas de confirmation, TP, trailing ou B4 ; plafond d’achat 1×, capacité margin 2×.
+Frais et financement inclus. Vol20 + régime : budget covariance 60 séances et filtre SPY/SMA200.
+
+| Profil | Capital final | Rendement | DD intraday max | Trades | Gagnants | Capital engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 24 — témoin | 15237.79 $ | +280.94 % | -40.45 % | 1471 | 35.62 % | 7187.51 $ |
+| 173 — témoin | 8666.59 $ | +116.66 % | -46.97 % | 1422 | 34.95 % | 3556.40 $ |
+| 24 recalculé — témoin | 22795.18 $ | +469.88 % | -39.12 % | 1467 | 35.92 % | 7289.63 $ |
+| 24 — vol20 + régime | 10035.92 $ | +150.90 % | -17.58 % | 1112 | 36.33 % | 2532.37 $ |
+| 173 — vol20 + régime | 3928.36 $ | -1.79 % | -41.81 % | 1046 | 33.08 % | 1432.08 $ |
+| 24 recalculé — vol20 + régime | 5699.96 $ | +42.50 % | -22.26 % | 1128 | 35.99 % | 2123.88 $ |
+
+Courbes : `capital-comparison.png`. Détails : `comparison.csv` et `annual-comparison.csv`.
+Les références à 24 entrées sont les TOP10, pas le témoin TOP5 à +206,51 %.
+
+Les témoins « 24 recalculé » utilisent exactement le même Oracle recalculé et les mêmes archives
+de prix que les branches à 173 entrées. Ils servent à isoler le changement de branche par titre.
+Les anciennes courbes à 24 entrées sont conservées comme comparaison historique distincte.
+
+Les cibles et réglages des estimateurs sont conservés. Le nombre de colonnes change aussi les dates
+où 80 % des entrées sont disponibles : les échantillons et titres qualifiés peuvent donc différer.
+Les comptes exacts figurent dans `comparison-method-audit.json`. Écart maximal des nouvelles
+probabilités Oracle contre les anciennes : 0.135210004913.
+
+Limites : univers contemporain, cours ajustés/révisés, secteurs actuels et archives 5m partielles.
+Les protections OHLC de repli sont conservées et comptées. Ce test reste exploratoire ; il ne
+certifie pas une disponibilité historique parfaite, des exécutions réelles ou un rendement futur.
+Aucun changement des réglages ni du modèle de production.
+
+Protocole détaillé : `doc/ml/q051_features173_20261116.md`.
+
+<!-- PRICE_QUALIFICATION_173_20261116 -->
+
+> **PRIX NON QUALIFIÉS — comparaison économique provisoire.** Un mélange de niveaux de prix sur DD produit un gain artificiel proche de +200 %. Les validations arithmétiques ne suffisent pas ; ne pas utiliser les rendements bruts ci-dessous pour choisir un modèle. Requalification en cours.
+
+Voir `doc/ml/q051_features173_20261116.md`.
+
+<!-- SIP_REPLAY_173_20261116 -->
+
+# Q051 — 173 variables par titre : replays avec prix recoupés SIP
+
+2021-01-01–2026-10-01 ; 4 000 $ continus ; Oracle TOP10 % → TOP10 LONG ; score >0,50 ; AUC calibration ≥0,50.
+SL5/open11 ; entrée J+1 ; positions complètes ; plafond d’achat 1× ; capacité margin 2× ; sans B4/TP/trailing.
+Les deux cas protégés ajoutent seulement le budget de volatilité 20 % et le filtre SPY/SMA200.
+
+| Profil | Capital final | Rendement | DD intraday max | Trades | Gagnants | Capital engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 173 — témoin | 8666.57 $ | +116.66 % | -46.97 % | 1422 | 34.95 % | 3556.37 $ |
+| 173 — vol20 + régime | 3505.77 $ | -12.36 % | -41.81 % | 1069 | 33.12 % | 1447.98 $ |
+| 24 — témoin recalculé | 14948.25 $ | +273.71 % | -39.12 % | 1466 | 35.61 % | 6887.30 $ |
+| 24 — vol20 + régime recalculé | 5716.71 $ | +42.92 % | -22.26 % | 1118 | 36.49 % | 2118.97 $ |
+
+## Qualification
+
+Le premier replay brut utilisait une série DD alternant entre environ 48 $ et 145 $, ce qui créait un faux gain proche de +200 %.
+Il est conservé et marqué non qualifié. Les historiques SIP ont été lus pour les 11 titres de la liste déjà signalée par l’audit antérieur,
+puis substitués sur leurs dates exactes disponibles, sans suppression de titre, modification des signaux, réglage de risque ou réentraînement.
+Source officielle du regroupement DD 1 pour 3 effectif le 24 juin 2026 :
+https://www.dupont.com/news/dupont-announces-reverse-stock-split-and-reaffirms-2026-financial-guidance.html
+
+État des contrôles : **ARITHMETIC_PASS_PRICE_RESERVES_REMAIN** ; réserves de fenêtres : 2.
+Les contrôles concernent les données recoupées et les positions réellement observées, pas une certification de tout le corpus.
+Les variables d’entraînement et les probabilités restent celles des archives initiales : ce replay isole la réparation des prix d’exécution/valorisation,
+il ne constitue pas un nouvel entraînement sur un historique intégralement requalifié.
+
+La période a déjà été explorée. Les poids sont annuels et hors entraînement pour leurs signaux, mais le protocole n’est pas une période de validation inédite.
+Limites : univers contemporain, révisions des prix, secteurs actuels, archives 5m partielles et repli OHLC ; frais forfaitaires et quantités historiques en unités ajustées.
+Les anciennes références à +280,94 % / +150,90 % et les nouveaux résultats bruts ne doivent pas être mélangés à ce tableau.
+
+Détails : `comparison.csv`, `annual-comparison.csv`, `validation.json`, `inputs/normalization-ledger.csv`.
+
+**Réserves encore présentes : ne pas conclure à une performance économiquement qualifiée sur les fenêtres signalées.**
+Les 2 mentions correspondent à 1 trade(s) clôturé(s) concerné(s) ; détail dans `validation.json`.
+- SIMPLE : TOELY, 2026-08-18 13:30:00+00:00 → 2026-09-01 13:30:00+00:00, PnL enregistré -70.68 $. Ce PnL n'est pas une correction contrefactuelle du capital final.
+
+Archives : `artifacts\research\us_q051_features173\20261116-v3-sip`.
+
+<!-- CONCLUSION_173_SIP_20261116 -->
+
+Conclusion de la comparaison appariée : **173 variables par titre n’améliorent pas le test**. Les quatre replays sont terminés et publiés dans l’IHM. La seule réserve de prix spécifique concerne un trade TOELY du témoin à 173 variables (PnL enregistré −70,68 $) ; les deux mentions de réserve ne représentent pas deux trades. Les paramètres et modèles de production restent inchangés. Détails : `doc/ml/q051_features173_20261116.md`.
+
+<!-- Q051_FEATURE_GROUPS_LOT1_LAUNCHED_20261116 -->
+
+## Q051 — ajouts ciblés aux 24 variables par titre : premier lot lancé
+
+Le premier lot T0/A/B est lancé : T0 conserve les 24 entrées exactes, A ajoute quatre variables de lien au marché (28), B ajoute cinq variables de volatilité (29). Les trois variantes partagent les dates d’entraînement/calibration et la population qualifiée. Oracle H10 et TOP10 % → TOP10 LONG, score >0,50/AUC ≥0,50, restent figés. Six replays 2021–1er octobre 2026 sont prévus : les trois branches avec et sans vol20 + régime. Entraînement LONG uniquement, recherche isolée, aucun changement de production, ordre ou appel fournisseur/LLM. Ce n’est pas un résultat économique terminé. Les deux tests ciblés et le pilote réel sur A passent.
+
+Protocole : `doc/ml/q051_feature_groups_proposal_20261116.md`. Suivi : `artifacts/research/us_q051_feature_groups/20261116-lot1/progress.json`.
+
+<!-- Q051_FEATURE_GROUPS_REPLAY_RECOVERY_20261116 -->
+
+Q051 ajouts ciblés T0/A/B : entraînement terminé (431 blocs, 9 267 modèles). Incident de lanceur corrigé après entraînement, sans refit ni changement des sélections : constante d’extension et dossier d’isolation de la préparation. Quatre tests ciblés passent. Préparation du marché terminée en SQL lecture seule ; les six replays s’enchaînent par groupes de trois. Aucun bilan économique final à cette reprise. Suivi : `artifacts/research/us_q051_feature_groups/20261116-lot1/progress.json`.
+
+<!-- Q051_FEATURE_GROUPS_LOT1_RESULTS_20261116 -->
+
+# Q051 — ajouts ciblés aux 24 variables : premier lot terminé
+
+Six replays terminés et publiés dans l’historique IHM. Production inchangée.
+2021-01-01–2026-10-01, capital continu 4 000 $, Oracle TOP10 % → TOP10 LONG, probabilité >0,50 et AUC de calibration ≥0,50, sans remplacement.
+Entrée J+1, position complète, SL5/open11, sans TP/trailing/confirmation/B4 ; plafond d’achat 1×, capacité margin 2× ; frais et financement inclus.
+
+| Profil | Capital final | Rendement | DD max | Taux gagnant | Trades | Capital engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 24 — témoin | 9162.34 $ | +129.06 % | -39.12 % | 34.23 % | 1420 | 5475.08 $ |
+| 24 + marché — témoin | 10408.83 $ | +160.22 % | -32.96 % | 35.47 % | 1418 | 6558.37 $ |
+| 24 + volatilité — témoin | 15894.14 $ | +297.35 % | -40.99 % | 37.63 % | 1419 | 6401.43 $ |
+| 24 — vol20 + régime | 6652.63 $ | +66.32 % | -21.25 % | 36.53 % | 1136 | 2185.46 $ |
+| 24 + marché — vol20 + régime | 5229.86 $ | +30.75 % | -28.94 % | 33.70 % | 1101 | 1994.78 $ |
+| 24 + volatilité — vol20 + régime | 3780.78 $ | -5.48 % | -41.91 % | 35.69 % | 1076 | 1667.39 $ |
+
+## Lecture
+
+A (bêta, R², alpha et momentum relatif au marché sur 252 séances) améliore le témoin simple : +160,22 % contre +129,06 %, DD −32,96 % contre −39,12 %.
+B (cinq variables de volatilité longue et normalisée) augmente davantage le rendement simple : +297,35 %, mais le DD se dégrade à −40,99 %.
+Avec vol20 + régime, A et B font moins bien que T0 à la fois en rendement et en DD : conserver les 24 variables pour ce profil à ce stade.
+Les expositions brutes moyennes rapportées au capital courant sont proches entre témoins simples (environ 88 %) et entre cas protégés (environ 46 %).
+Les trois références ont été réentraînées sur une population et des lignes communes ; ces chiffres ne remplacent pas rétroactivement les anciennes références à 24 variables.
+
+## Rendements annuels
+
+| Année | T0 témoin | A témoin | B témoin | T0 vol20/régime | A vol20/régime | B vol20/régime |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2021 | +5.82 % | +26.53 % | -13.17 % | -11.27 % | +11.93 % | -9.60 % |
+| 2022 | -9.20 % | +10.64 % | +46.16 % | +3.31 % | -5.28 % | -14.83 % |
+| 2023 | +67.36 % | +44.03 % | +46.95 % | +29.56 % | +4.35 % | +24.83 % |
+| 2024 | +28.26 % | +2.23 % | +12.13 % | +3.93 % | +0.68 % | -14.77 % |
+| 2025 | -14.20 % | +31.68 % | +14.04 % | -2.34 % | -5.84 % | +1.91 % |
+| 2026 | +29.44 % | -4.13 % | +66.61 % | +37.97 % | +24.67 % | +13.22 % |
+
+## Contrôles et limites
+
+431 blocs et 9 267 modèles LONG vérifiés après entraînement ; les trois branches partagent les mêmes lignes fit/calibration, avec 24, 28 et 29 entrées.
+Quatre tests ciblés passent. Les six bilans passent les vérifications de PnL, de capital annuel et de drawdown. Les prix d’exécution communs sont figés avant les replays.
+Qualification ciblée de prix : **OBSERVED_PRICE_SCOPE_PASS_RESEARCH_ONLY**, réserves observées : 0. Voir `price-window-validation.json` (positions clôturées et ouvertes).
+Cette revue porte uniquement sur la liste préexistante de titres signalés et ses fenêtres réellement détenues, pas sur la qualification de tout le corpus.
+Intraday partiel avec repli OHLC, prix historiques révisés et unités ajustées, univers contemporain. Aucune certification PIT ni parité d’exécution live.
+Les années 2021–2026 ont déjà été explorées dans d’autres expériences ; pas de nouvelle validation indépendante. Les gains observés ne justifient pas une activation automatique.
+La contre-performance sous vol20 + régime ne permet pas à elle seule de séparer l’effet du budget de volatilité de celui du filtre de régime.
+Les erreurs de préparation ont été corrigées sans réentraînement ; anciens protocoles et journaux conservés. Aucune modification de production, aucun ordre, appel fournisseur/LLM ou écriture SQL.
+
+Archives : `artifacts/research/us_q051_feature_groups/20261116-lot1/`.
+Courbes : `capital-comparison.png`. Détails : `comparison.csv`, `annual-comparison.csv`, `classification-by-year.csv`, `history.json`.
+
+<!-- Q051_FEATURE_GROUPS_CD_LAUNCHED_20261116 -->
+
+## Deuxième lot C/D lancé
+
+C ajoute `sma20_minus_sma50`, `sma50_minus_sma200` et `ema20_minus_sma20`
+aux 24 entrées exactes : 27 variables. D ajoute `cmf_20`, `volume_ratio_20`,
+`volume_zscore_20` et `daily_return_times_volume_ratio_20` : 28 variables.
+Chaque variante est testée séparément, avec et sans budget de volatilité 20 %
+et filtre de régime. Période 2021–1er octobre 2026, capital continu 4 000 $,
+Oracle TOP10 % → TOP10 LONG, score >0,50/AUC calibration ≥0,50,
+SL5/open11 et autres réglages du premier lot inchangés.
+
+La référence T0 n’est pas réentraînée. Les dates et les valeurs de ses entrées
+sont reproduites pour chaque titre, et les signatures fit/calibration doivent
+correspondre exactement. Les modèles C/D sont entraînés uniquement dans la
+cohorte des modèles T0 déjà qualifiés ; une calibration constante propre à une
+nouvelle variante produit une abstention documentée, sans élargir les candidats.
+Le masque de disponibilité utilisé au premier lot est conservé.
+
+Huit tests préalables passent. Le premier bloc réel produit 14 modèles C/D et
+reproduit les prédictions T0 sans différence, sur les mêmes dates de scoring.
+Les modèles et les anciens résultats du premier lot sont préservés.
+Les réponses intraday vides déjà connues du premier lot ne sont pas remplies
+rétroactivement ; seuls les nouveaux couples titre/séance sont lus en SQL,
+dans une transaction lecture seule. Aucun appel fournisseur/LLM, ordre ou
+changement de configuration/modèle de production.
+
+Lanceur : `scripts.research.us_q051_feature_groups_cd_20261116 --phase all`.
+Suivi : `artifacts/research/us_q051_feature_groups/20261116-lot2-cd/progress.json`.
+Les modèles et audits sont dans `jobs/`, les sorties dans `variants/C` et
+`variants/D`. Les quatre nouveaux backtests seront publiés dans l’historique
+IHM après validation et consolidés avec T0/A/B dans le bilan final.
+Aucun rendement final C/D n’est encore disponible au lancement.
+
+<!-- Q051_FEATURE_GROUPS_AB_LAUNCHED_20261116 -->
+
+## Variante complémentaire A+B — témoin uniquement
+
+Lancée le 16 novembre 2026 à 18 h 59 Europe/Paris, en parallèle de C/D.
+Un nouveau modèle LONG par titre reçoit les 24 entrées compactes exactes,
+les quatre variables marché A et les cinq variables volatilité B : 33 variables
+uniques. Il ne s’agit pas d’une moyenne de scores ni d’une addition de rendements.
+
+Une seule variante économique est prévue : témoin sans vol20 ni filtre de régime,
+2021–1er octobre 2026, 4 000 $ continus, TOP10 % Oracle → TOP10 LONG,
+score >0,50 et AUC calibration ≥0,50, SL5/open11 et autres réglages du premier
+lot inchangés. Les références T0, A et B sont réutilisées sans réentraînement.
+Les dates fit/calibration et les valeurs des entrées communes doivent être
+identiques à T0 ; ses prédictions sont vérifiées pour chaque modèle annuel.
+
+Douze tests ciblés passent après validation de l’accès local aux liens de fichiers.
+Le pilote réel produit sept modèles AB et reproduit T0 sans écart. Deux processus
+entraînent le lot, puis un seul replay AB_SIMPLE est enchaîné. Les publications
+IHM partagent le verrou de fichier des cas C/D pour éviter des écritures concurrentes.
+Le lot C/D et ses sources restent inchangés. Aucun ordre, appel fournisseur/LLM,
+écriture SQL ou changement de production.
+
+Lanceur : `scripts.research.us_q051_feature_groups_ab_20261116 --phase all`.
+Suivi : `artifacts/research/us_q051_feature_groups/20261116-lot3-ab-temoin/progress.json`.
+Le bilan comparera T0/A/B/AB après validation. Aucun résultat économique AB
+n’est encore disponible au lancement.
+
+<!-- Q051_SL_RECURRENCE_AUDIT_20261116 -->
+
+# Q051 — répétitions des SL par symbole
+
+Audit des six portefeuilles T0/A/B terminés, 2021–1er octobre 2026, LONG SL5/open11, trades clôturés uniquement.
+`STOP` et `STOP_GAP` comptent comme SL. Une perte à open11 est comptée séparément. Aucun filtre, entraînement, ordre ou nouveau backtest n’est appliqué.
+
+| Cas | Trades | Titres | SL | Taux SL | Titres ≥2 SL | Toujours perdants ≥5 trades | Toujours perdants ≥10 trades |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| T0 témoin | 1420 | 350 | 852 | 60.00 % | 188 | 6 | 0 |
+| T0 vol20/régime | 1136 | 308 | 656 | 57.75 % | 166 | 0 | 0 |
+| A marché témoin | 1418 | 326 | 827 | 58.32 % | 188 | 7 | 1 |
+| A vol20/régime | 1101 | 289 | 660 | 59.95 % | 162 | 3 | 0 |
+| B volatilité témoin | 1419 | 339 | 808 | 56.94 % | 182 | 4 | 0 |
+| B vol20/régime | 1076 | 296 | 631 | 58.64 % | 149 | 7 | 0 |
+
+## T0 témoin — titres avec le plus de SL
+
+| Symbole | Trades | SL | Gagnants | Résultat net | Série SL max | Années perdantes / actives |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| NVDA | 21 | 17 | 19.05 % | +15.05 $ | 11 | 1/5 |
+| YPF | 23 | 12 | 47.83 % | +969.25 $ | 3 | 2/3 |
+| Z | 21 | 11 | 38.10 % | -19.40 $ | 5 | 2/4 |
+| PBT | 18 | 11 | 33.33 % | +260.79 $ | 4 | 0/1 |
+| STX | 16 | 11 | 25.00 % | +769.08 $ | 3 | 1/2 |
+| HOV | 15 | 10 | 33.33 % | -87.21 $ | 5 | 2/3 |
+| MMYT | 15 | 10 | 33.33 % | -143.74 $ | 4 | 2/2 |
+| AMR | 17 | 9 | 41.18 % | -289.12 $ | 4 | 2/2 |
+| BOOT | 14 | 9 | 28.57 % | -323.23 $ | 3 | 2/2 |
+| CAR | 12 | 9 | 25.00 % | +294.08 $ | 6 | 0/1 |
+| BBWI | 15 | 8 | 46.67 % | +116.92 $ | 2 | 1/3 |
+| DDS | 15 | 8 | 46.67 % | +241.48 $ | 3 | 0/1 |
+
+### Tous les trades perdants, au moins cinq entrées
+
+| Symbole | Trades | SL | Résultat net | Années actives |
+| --- | ---: | ---: | ---: | ---: |
+| ALGN | 6 | 6 | -300.62 $ | 1 |
+| VET | 6 | 6 | -195.89 $ | 1 |
+| NEO | 6 | 6 | -124.86 $ | 1 |
+| FUTU | 5 | 3 | -249.01 $ | 1 |
+| AMKR | 5 | 5 | -140.43 $ | 3 |
+| TREX | 5 | 5 | -136.67 $ | 1 |
+
+## B volatilité témoin — titres avec le plus de SL
+
+| Symbole | Trades | SL | Gagnants | Résultat net | Série SL max | Années perdantes / actives |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Z | 22 | 13 | 31.82 % | -30.23 $ | 5 | 1/3 |
+| RARE | 19 | 12 | 26.32 % | -140.64 $ | 5 | 1/3 |
+| PBT | 17 | 11 | 29.41 % | +86.64 $ | 4 | 2/3 |
+| FN | 16 | 11 | 31.25 % | +53.37 $ | 3 | 1/2 |
+| TAL | 13 | 11 | 15.38 % | -304.17 $ | 9 | 1/1 |
+| STX | 15 | 10 | 33.33 % | +2216.15 $ | 3 | 0/1 |
+| BOOT | 14 | 10 | 28.57 % | -185.21 $ | 3 | 2/2 |
+| MMYT | 19 | 9 | 47.37 % | +34.21 $ | 2 | 0/1 |
+| ANF | 17 | 9 | 47.06 % | +46.09 $ | 4 | 2/3 |
+| ETSY | 16 | 9 | 43.75 % | +50.15 $ | 6 | 1/2 |
+| EDU | 12 | 9 | 25.00 % | -425.63 $ | 4 | 2/2 |
+| FTAI | 18 | 8 | 50.00 % | +559.51 $ | 3 | 2/4 |
+
+### Tous les trades perdants, au moins cinq entrées
+
+| Symbole | Trades | SL | Résultat net | Années actives |
+| --- | ---: | ---: | ---: | ---: |
+| PRIM | 7 | 7 | -503.01 $ | 2 |
+| AGYS | 6 | 6 | -654.44 $ | 2 |
+| SNAP | 5 | 5 | -476.09 $ | 1 |
+| BJRI | 5 | 5 | -195.12 $ | 1 |
+
+## Persistance après 2024
+
+Les listes ci-dessous sont établies exclusivement avec les trades sortis avant le 1er janvier 2025, puis observées sur les entrées 2025–2026.
+Règle 1 : au moins cinq trades historiques, aucun gagnant. Règle 2 : au moins dix trades, ≥80 % de SL et PnL historique négatif.
+Cela mesure les trades observés ensuite sur ces titres, pas le capital final d’une stratégie les excluant. Aucune réallocation, nouvelle entrée ou capital libéré n’a été rejoué.
+
+| Cas | Règle historique | Titres signalés | Titres revus ensuite | Trades futurs | Gagnants futurs | PnL futur observé |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| T0 témoin | zero_win_min5 | 4 | 0 | 0 | — | +0.00 $ |
+| T0 témoin | sl80_min10_negative | 1 | 1 | 4 | 25.00 % | +103.59 $ |
+| T0 vol20/régime | zero_win_min5 | 2 | 1 | 9 | 33.33 % | -2.59 $ |
+| T0 vol20/régime | sl80_min10_negative | 0 | 0 | 0 | — | +0.00 $ |
+| A marché témoin | zero_win_min5 | 4 | 0 | 0 | — | +0.00 $ |
+| A marché témoin | sl80_min10_negative | 2 | 1 | 1 | 0.00 % | -14.27 $ |
+| A vol20/régime | zero_win_min5 | 2 | 0 | 0 | — | +0.00 $ |
+| A vol20/régime | sl80_min10_negative | 0 | 0 | 0 | — | +0.00 $ |
+| B volatilité témoin | zero_win_min5 | 2 | 0 | 0 | — | +0.00 $ |
+| B volatilité témoin | sl80_min10_negative | 1 | 0 | 0 | — | +0.00 $ |
+| B vol20/régime | zero_win_min5 | 4 | 0 | 0 | — | +0.00 $ |
+| B vol20/régime | sl80_min10_negative | 0 | 0 | 0 | — | +0.00 $ |
+
+## Unités et limites
+
+Les 7570 lignes des variantes correspondent à 4867 épisodes cohérents distincts et 0 épisodes à issues divergentes, exclus du résumé dédupliqué.
+Une même entrée apparaît dans plusieurs variantes : ces observations ne sont pas des preuves indépendantes. Les dollars des variantes ne sont jamais additionnés en un portefeuille fictif.
+Le PnL par titre reprend les frais et dividendes attribués aux trades, sans réaffecter les éventuels frais globaux de financement du portefeuille.
+Le résumé par épisode dédupliqué utilise un rendement net normalisé, pas un cumul de PnL en dollars. Ce périmètre réunit des sélections qui ne seraient pas toutes détenues simultanément dans un seul compte.
+Un titre sans gagnant sur une ou deux entrées n’est pas établi comme durablement perdant. Les seuils descriptifs de 5/10/20 trades sont fournis explicitement.
+Les pertes sont dépendantes des dates, du marché et de la sélection Oracle ; les séries de SL comptent uniquement les trades de ce titre, et non les pertes consécutives de tout le portefeuille.
+Pour les statistiques conditionnelles, seuls les résultats strictement connus avant l’entrée suivante sont utilisés ; les sorties à l’instant exact de l’entrée sont écartées de cette connaissance préalable.
+L’audit porte sur les symboles des archives : changements d’identité/ticker, univers contemporain, cours révisés et repli OHLC restent des limites. Les positions encore ouvertes ne sont pas déclarées gagnantes ou perdantes.
+Les règles historiques sont descriptives, préspécifiées pour cet audit ; 2025–2026 a déjà été observé dans les expériences antérieures. Aucun univers d’exclusion n’est activé.
+Détails : `per-symbol.csv`, `per-symbol-year.csv`, `sl-count-distribution.csv`, `conditional-prior-sl.csv`, `frozen-history-check.csv` et `unique-episodes.csv`.
+
+Archives : `artifacts\research\us_q051_sl_recurrence\20261116-v1`.
+
+<!-- Q051_SL_RECURRENCE_SUPPLEMENT_20261116 -->
+
+## Synthèse complémentaire — épisodes distincts et persistance
+
+Après déduplication des entrées communes entre les six variantes : **21 titres**
+ont uniquement des trades perdants sur au moins cinq épisodes distincts, avec
+5 à 9 épisodes par titre ; aucun n’atteint dix épisodes tous perdants dans cette
+union. La liste complète est dans `always-losing-unique-min5.csv`.
+FIZZ et SAM comptent chacun 9 pertes/9 SL, BIDU 7/7, TFIN 7/7. Les pertes de
+FIZZ, SAM et BIDU se concentrent sur 2021. Ce constat est rétrospectif, sur les
+entrées sélectionnées par ces stratégies, pas sur toutes les entrées possibles.
+
+En figeant la liste **avant 2025** sur les épisodes distincts (au moins cinq
+trades, aucun gagnant), on trouve 17 titres. Seulement trois reviennent sur des
+entrées en 2025–2026 : CCL, MRVL et TREX, pour **8 trades dont 4 gagnants**.
+Leurs rendements nets normalisés cumulés représentent +4,33 points de pourcentage
+à poids égal par trade, et non un rendement de portefeuille ou un PnL en dollars.
+Cette faible couverture ne valide pas une exclusion durable par symbole.
+TREX avait 10 SL/10 entrées avant 2025, puis un gagnant sur trois entrées futures.
+
+Dans T0, après au moins trois SL consécutifs déjà résolus pour ce même titre,
+les 101 trades suivants observés ont 41,58 % de gagnants et +2 345,06 $ de PnL
+comptabilisé. Une interdiction générale après trois SL retirerait donc aussi
+des gagnants ; aucune stratégie après exclusion ou réallocation n’a été rejouée.
+
+Autre exemple : STX dans B a 10 SL sur 15 trades, mais +2 216,15 $ nets cumulés.
+Un grand nombre de stops ne suffit pas à condamner le titre.
+
+Compléments : `unique-episodes-history-check.csv`, `unique-episodes-history-symbols.csv`,
+`always-losing-unique-min5.csv`, `always-losing-by-case-min5.csv` et
+`sl-repetition-distribution.png`. Les quatre tests ciblés passent.
+Aucun filtre ou fichier d’univers de trading n’est modifié.
+<!-- Q051_SL30_PAUSE100_STARTED_20261116 -->
+
+**Bilan terminé le16 novembre2026** : contrôles sans pause exactement reproduits.
+2021–1er octobre2026,4000$, TOP10% Oracle H10 → TOP10 LONG, SL5/open11,
+sans vol20/régime/B4, plafond achats1×, frais et financement inclus.
+
+| Cas | Rendement | DD max | Gagnants | Trades |
+| --- | ---: | ---: | ---: | ---: |
+| T0 témoin | +129,06% | −39,12% | 34,23% | 1420 |
+| T0 +2 SL/30 séances → pause100 avant Oracle | +73,90% | −52,41% | 35,76% | 1373 |
+| B témoin | +297,35% | −40,99% | 37,63% | 1419 |
+| B +2 SL/30 séances → pause100 avant Oracle | +178,25% | −37,03% | 37,18% | 1342 |
+
+T0 détérioré ; sur B, gain de3,97 points de DD contre perte de119,11 points
+de rendement cumulé. Pas d’activation. Audits des exclusions et des durées PASS,
+207 pauses/180 titres T0,200/175 B. Prix ciblés T0 PASS recherche ; B réserve
+TOELY du1er au16 septembre2026 (base ADR non qualifiée, preuve SIP absente).
+Intraday partiel/repli OHLC et absence de certification PIT/parité live.
+Détails : [note et résultats](q051_sl30_pause100_20261116.md),
+`post-run-review.json` dans chaque dossier de campagne. Aucun changement de production.
+
+Variante B ajoutée : même pause100 après deux SL dans30 séances, avant Oracle,
+sur B seul (29 variables), contre B_SIMPLE +297,35% / DD−40,99%. Cache432 lots
+réutilisé, aucun nouvel entraînement. Contrôle B distinct ; démarrage de la
+variante B en parallèle de T0 quand son contrôle sans pause est validé. Onze
+tests ciblés passent. Pas de changement de production ni de résultat nouveau
+à ce stade. Archives :
+`artifacts/research/us_q051_sl_pause/20261116-B-30sessions-pause100-v1/`.
+
+Mise à jour du16 novembre vers20h43 : 432/432 lots terminés, sélections sans
+pause reproduites. Premier CONTROL interrompu par une écriture de progression
+hors de son dossier isolé. Corrigé et testé (7 tests), reprise du témoin puis
+de la variante, sans recalcul des modèles. Protocole antérieur et tentative
+échouée conservés ; détails dans la note SL30/pause100.
+
+## Q051 — deux SL consécutifs dans30 séances → pause100 avant Oracle (lancé)
+
+16 novembre2026 : protocole demandé, préparation des scores lancée. Comparaison
+au témoin `T0_SIMPLE` du lot1, 2021–1er octobre2026, 4000$, TOP10% Oracle H10 →
+TOP10 LONG, score>0,50/AUC calibration≥0,50, SL5/open11, sans vol20/régime/B4.
+Deux SL du même titre dans30 séances NYSE déclenchent une pause de100 séances
+suivantes ; exclusion avant classement Oracle et recalcul du TOP10% sur les
+membres éligibles. Aucun blacklist anticipé à partir des résultats futurs.
+Garde-fous existants conservés. Six tests ciblés passent ; pilote :494
+prédictions archivées reproduites. Pas encore de résultat de rendement ni de
+changement de production. Le contrôle intégral sans pause précède la variante.
+
+Détails : [protocole](q051_sl30_pause100_20261116.md).
+Suivi : `artifacts/research/us_q051_sl_pause/20261116-30sessions-pause100-v1/progress.json`.
+
+
+<!-- Q051_FEATURE_GROUPS_CD_RESULTS_20261116 -->
+
+# Q051 — C/D après T0/A/B
+
+Quatre nouveaux replays C/D terminés, comparés aux six résultats T0/A/B conservés. Aucun réentraînement de la référence.
+2021-01-01–2026-10-01 ; 4 000 $ continus ; TOP10 % Oracle → TOP10 LONG ; score >0,50 ; AUC calibration ≥0,50 ; sans remplacement.
+Entrée J+1, SL5/open11, position complète, aucun TP/trailing/confirmation/B4 ; plafond achat 1×, capacité margin 2× ; frais et financement inclus.
+
+| Variables | Gestion | Capital final | Rendement | DD max | Gagnants | Capital engagé moyen |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 24 — référence | Témoin | 9162.34 $ | +129.06 % | -39.12 % | 34.23 % | 5475.08 $ |
+| 24 — référence | Vol20 + régime | 6652.63 $ | +66.32 % | -21.25 % | 36.53 % | 2185.46 $ |
+| 24 + marché | Témoin | 10408.83 $ | +160.22 % | -32.96 % | 35.47 % | 6558.37 $ |
+| 24 + marché | Vol20 + régime | 5229.86 $ | +30.75 % | -28.94 % | 33.70 % | 1994.78 $ |
+| 24 + volatilité | Témoin | 15894.14 $ | +297.35 % | -40.99 % | 37.63 % | 6401.43 $ |
+| 24 + volatilité | Vol20 + régime | 3780.78 $ | -5.48 % | -41.91 % | 35.69 % | 1667.39 $ |
+| 24 + structure de tendance | Témoin | 7626.59 $ | +90.66 % | -43.66 % | 35.43 % | 4113.63 $ |
+| 24 + structure de tendance | Vol20 + régime | 4972.47 $ | +24.31 % | -21.61 % | 36.12 % | 1877.76 $ |
+| 24 + volumes | Témoin | 6933.40 $ | +73.33 % | -39.88 % | 33.56 % | 4822.82 $ |
+| 24 + volumes | Vol20 + régime | 5963.11 $ | +49.08 % | -22.07 % | 34.95 % | 2189.87 $ |
+
+## Méthode et limites
+
+C ajoute trois écarts entre moyennes mobiles (27 entrées), D quatre indicateurs de volume (28). Les deux conservent les 24 entrées exactes du compact.
+Pour chaque titre et année, les dates et valeurs communes sont comparées au premier lot, les signatures fit/calibration sont identiques et les probabilités T0 sont reproduites à 1e-12 près.
+Seule la population disposant déjà d’un modèle T0 qualifié est utilisée. Une éventuelle calibration constante de C ou D produit une abstention propre à cette variante, comptabilisée dans les audits.
+Les archives du premier lot sont inchangées. Les nouvelles requêtes SQL de préparation sont en lecture seule et ne remplissent pas rétroactivement ses réponses vides connues.
+Qualification ciblée des fenêtres de prix C/D : PRICE_RESERVES_REMAIN ; réserves : 3. Voir `price-window-validation.json`.
+L’intraday reste partiel avec repli OHLC. Univers contemporain, cours révisés et période déjà explorée : aucune certification PIT, parité live ou validation future indépendante.
+Aucun ordre, appel fournisseur/LLM ou changement du modèle/configuration de production.
+
+Archives : `artifacts/research/us_q051_feature_groups/20261116-lot2-cd/`. Détails : `comparison.csv`, `annual-comparison.csv`, `capital-comparison.png`, `history.json`.
+
+<!-- Q051_FEATURE_GROUPS_AB_RESULTS_20261116 -->
+
+# Q051 témoin — ajout conjoint de A et B
+
+Un seul nouveau modèle LONG à 33 variables : les 24 entrées exactes + les quatre variables marché A + les cinq variables volatilité B.
+Aucune moyenne des scores existants et aucune addition des rendements. Modèles annuels passés, même Oracle, cohorte T0, dates fit/calibration et seuils.
+2021–1er octobre 2026, 4 000 $ continus, TOP10 % Oracle → TOP10 LONG, score >0,50/AUC calibration ≥0,50 ; SL5/open11 ; sans TP/trailing/confirmation/B4/vol20/régime ; plafond achat 1×, capacité margin 2× ; frais inclus.
+
+| Modèle | Capital final | Rendement | DD max | Gagnants | Trades |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 24 — référence | 9162.34 $ | +129.06 % | -39.12 % | 34.23 % | 1420 |
+| 24 + marché | 10408.83 $ | +160.22 % | -32.96 % | 35.47 % | 1418 |
+| 24 + volatilité | 15894.14 $ | +297.35 % | -40.99 % | 37.63 % | 1419 |
+| 24 + marché + volatilité | 9923.95 $ | +148.10 % | -42.76 % | 36.42 % | 1436 |
+
+Contrôle de prix ciblé : OBSERVED_PRICE_SCOPE_PASS_RESEARCH_ONLY, réserves : 0.
+Les références T0/A/B et le lot C/D ne sont pas modifiés. Intraday partiel avec repli OHLC, univers contemporain, prix révisés et période déjà explorée ; aucune certification PIT ou parité live.
+Aucun ordre, appel fournisseur/LLM, écriture SQL ou changement de production.
+Archives : `artifacts/research/us_q051_feature_groups/20261116-lot3-ab-temoin/`. Détails : `comparison.csv`, `annual-comparison.csv`, `validation.json`, `capital-comparison.png`.
+<!-- Q051_B_TRAINING_UI_PROFILE_20261116 -->
+
+## B seul — raccordement entraînement et profil de backtest
+
+16 novembre2026 : option « Volatilité inhabituelle — per-symbol (B) » cochée
+par défaut pour les nouveaux bundles Oracle parcours.24+5 variables, LONG/SHORT,
+H10/H15/H20 ; mode figé `compact_volatility`. Prédiction et diagnostic raccordés,
+historique de normalisation aligné à l’entraînement. Anciens contrats24/173
+préservés. Profil B seul ajouté au backtest, réapplication opérationnelle,
+courbe B et témoin apparié ajoutés à la fenêtre de comparaison avec SPY.
+Le profil ne transforme pas les anciens modèles ; un batch29 variables est requis.
+80 tests ciblés et contrôle visuel. Aucun entraînement réel, ordre ou changement
+de configuration de production lancé par cette évolution.
+Détails : [note du raccordement](q051_b_pipeline_backtest_20261116.md).
+<!-- Q051_B_EARLY_SL_STARTED_20261116 -->
+
+Pilote complémentaire technique : quatre têtes SLJ/SL10 effectivement entraînées
+sur cinq chunks, pour les signaux2020/2021, avec les mêmes lignes fit/calibration
+dans chaque paire et les dates de disponibilité passées vérifiées. Pas de
+conclusion sur leurs scores ; le lot complet poursuit ses calculs.
+
+## B — trajectoire dix séances et filtre de SL première séance (lancé)
+
+GO du16 novembre2026 : quatre cas sur2021–1er octobre2026,4000$ continus,
+mêmes Oracle et portefeuille B_SIMPLE SL5/open11 : B inchangé ; nouveau LONG
+par titre B29+15 descripteurs dix séances ; B +filtre commun de SL àJ ; B +même
+filtre avec trajectoire dix séances. Les modèles SL apprennent uniquement sur
+le TOP179 Oracle OOF historique, cible touché du SL arrondi pendant la première
+séance d’achat. Seuil au90e percentile de la calibration passée, strictement
+supérieur ; pas de balayage ni remplacement. Unknown conserve B, avec couverture
+consignée. Aucune donnéeJ+1 dans les entrées du modèle.
+
+Sept tests passent ; pilote : sept modèles LONG10,494 probabilités B reproduites.
+431 lots restants lancés sur quatre travailleurs, puis modèles SL annuels,
+contrôle B exactement reproduit et trois replays. Aucun résultat économique
+nouveau, ordre, appel fournisseur/LLM ou changement de production à ce stade.
+Les périodes sont rétrospectives et déjà explorées ; réserves prix/intraday
+et labels seront contrôlées avant conclusion. Détails :
+[protocole et suivi](q051_b_early_sl_20261116.md).
+Archives : `artifacts/research/us_q051_b_early_sl/20261116-v1/`.
+
+<!-- Q051_B_EARLY_SL_RESULTS_20261116 -->
+
+# B — trajectoire dix séances et détection de SL première séance
+
+2021–1er octobre2026,4000$ continus, TOP10% Oracle → TOP10 LONG, score>0,50/AUC calibration≥0,50, entrée J+1, SL5/open11, plafond achats1×, frais et financement inclus. Sans vol20/régime/B4/pause100.
+Les périodes sont rétrospectives et déjà explorées. Aucun modèle, ordre ou réglage de production modifié.
+
+| Cas | Capital final | Rendement | DD max | Gagnants | Trades | SL première séance |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CONTROL | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 | 152 |
+| LONG10 | 7443.38$ | +86.08% | -45.04% | 35.10% | 1470 | 174 |
+| SLJ | 11070.73$ | +176.77% | -40.22% | 37.37% | 1314 | 137 |
+| SL10 | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 | 142 |
+
+Revue : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Réserves de prix : 0. Écarts de labels première séance : 4/5549.
+Les labels gagnants écartés sont des occasions théoriques sans contraintes de capital, pas des trades exécutés. La différence économique vient du replay complet avec réallocation du capital. Intraday partiel/repli OHLC, univers contemporain et prix révisés ; pas de certification PIT ou parité live.
+Archives : `artifacts\research\us_q051_b_early_sl\20261116-v1`. Voir `comparison.csv`, `filter-diagnostics.csv`, `post-run-review.json`, `capital-comparison.png`.
+<!-- Q051_B_TOP5_VS_TOP10_STARTED_20261117 -->
+
+## B et B +anti-SL10 — TOP5 contre TOP10 (lancé)
+
+GO du17 novembre2026 : deux nouveaux replays TOP5 sur2021–1er octobre2026,
+4000$ continus, comparés aux TOP10 archivés B+297,35%/DD−40,99% et B+anti-SL10
++303,52%/DD−34,98%. Même TOP179 Oracle, mêmes poids B et modèles/seuils SL10,
+SL5/open11 et portefeuille identique. TOP5 du rang LONG original avant les
+seuils ; filtre après TOP5, sans remplacement. Pas de fit ou recalibration.
+Dix tests passent ; filtre TOP10 reproduit,6286 signaux TOP5,5467 retenus
+après anti-SL (signaux, pas trades). Deux replays en parallèle, aucune nouvelle
+lecture SQL, fournisseur/LLM, ordre ou modification de production.
+[Protocole et suivi](q051_b_top5_20261117.md).
+Archives : `artifacts/research/us_q051_b_top5_vs_top10/20261117-v1/`.
+
+<!-- Q051_B_TOP5_VS_TOP10_RESULTS_20261117 -->
+
+# B seul / B + anti-SL10 — TOP5 contre TOP10
+
+2021–1er octobre2026,4000$ continus, TOP10% Oracle inchangé, mêmes modèles et seuils calibrés. Seul le TOP LONG passe de10 à5, avant le filtre anti-SL et sans remplacement. SL5/open11, entrée J+1, mêmes frais/financement et portefeuille ; sans vol20/régime/B4/pause100.
+Les deux TOP10 sont les archives validées, sans recalcul ni modification.
+
+| Cas | Capital final | Rendement | DD max | Gagnants | Trades | SL première séance |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B seul — TOP10 | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 | 152 |
+| B + anti-SL10 — TOP10 | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 | 142 |
+| B seul — TOP5 | 7199.54$ | +79.99% | -44.71% | 35.72% | 1201 | 152 |
+| B + anti-SL10 — TOP5 | 5783.59$ | +44.59% | -50.45% | 36.30% | 1113 | 111 |
+
+Revue des nouvelles détentions : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Prix : 0 réserves ; labels première séance : 2/2310 écarts.
+Intraday partiel/repli OHLC, univers contemporain, données et périodes déjà explorées ; recherche sans certification PIT ni parité live. Les labels gagnants écartés sont des occasions théoriques, pas des trades réellement exécutés. Aucun ordre ou changement de production.
+Archives : `artifacts\research\us_q051_b_top5_vs_top10\20261117-v1`. Voir `comparison.csv`, `annual-comparison.csv`, `filter-diagnostics.csv`, `capital-comparison.png`.
+
+<!-- Q051_B_SL10_VOL20_REGIME_STARTED_20261117 -->
+
+### 2026-11-17 — B + anti-SL trajectoire dix séances : ajout volatilité 20 % + régime
+
+Un nouveau replay TOP10 LONG est préparé sur 2021–1er octobre 2026, capital 4 000 $, avec les 8 992 signaux archivés SL10 identiques et les modèles/seuils annuels inchangés. Seuls ajouts : budget de volatilité portefeuille 20 % sur 60 séances antérieures et régime SPY J > 98 % SMA200 pour les entrées J+1. SL5/open11, position complète, plafond achats 1× et capacité margin 2× ; sans B4/DD ni pause100. Aucun ordre, téléchargement, accès SQL ou changement de production.
+
+13 tests ciblés passés ; identité des signaux et du portefeuille de base vérifiée. Résultat économique en attente. Les quatre TOP5/TOP10 déjà validés restent immuables. La consolidation inclura les cinq courbes, les résultats annuels, le drawdown, les taux gagnants et le capital engagé. Limites : intraday partiel/repli OHLC et univers contemporain ; recherche rétrospective.
+
+Protocole : `doc/ml/q051_b_sl10_vol20_regime_20261117.md`. Archives et suivi : `artifacts/research/us_q051_b_sl10_vol20_regime/20261117-v1`.
+
+<!-- Q051_B_SL10_VOL20_REGIME_STOPPED_USER_20261117 -->
+Nouvelle variante anti-SL10 + vol20/régime arrêtée à la demande de l’utilisateur avant extinction du PC. Quatre résultats TOP5/TOP10 terminés préservés ; reprise du nouveau replay depuis le début après archivage de son dossier partiel. Voir doc/ml/q051_b_sl10_vol20_regime_20261117.md et stop-receipt.json.
+
+<!-- Q051_B_SL10_VOL20_REGIME_RESULTS_20261117 -->
+
+# B + anti-SL10 avec volatilité 20 % et régime — TOP10
+
+2021–1er octobre 2026, 4 000 $ continus. Modèles annuels et signaux SL10 TOP10 identiques ; aucun réentraînement ni changement de seuil. Seul ajout : covariance des 60 séances antérieures pour limiter les nouveaux achats à un budget annualisé de 20 %, et SPY J > 98 % de sa moyenne 200 séances pour autoriser une entrée J+1. Aucun filtre de rendement futur.
+Portefeuille inchangé : risque 1,25 %, poids 20 %, 20 positions, minimum 50 $, plafond achats 1×, capacité margin 2×, position entière, SL5 %, sans TP/trailing, sortie open11, frais 8 pb par côté et financement 6,5 % annualisé. Sans B4/DD ni pause100.
+
+| Cas | Capital final | Rendement | DD max | Gagnants | Trades |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| B seul — TOP10 | 15894.14 $ | +297.35 % | -40.99 % | 37.63 % | 1419 |
+| B + anti-SL10 — TOP10 | 16140.82 $ | +303.52 % | -34.98 % | 38.13 % | 1356 |
+| B + anti-SL10 + vol20/régime — TOP10 | 3526.98 $ | -11.83 % | -37.36 % | 36.18 % | 1031 |
+| B seul — TOP5 | 7199.54 $ | +79.99 % | -44.71 % | 35.72 % | 1201 |
+| B + anti-SL10 — TOP5 | 5783.59 $ | +44.59 % | -50.45 % | 36.30 % | 1113 |
+
+Revue des nouvelles détentions : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Prix : 0 réserves ; labels première séance : 1/1029 écarts.
+La volatilité cible n’est pas un plafond de drawdown. Les règles limitent les nouvelles entrées, sans liquider les positions existantes. Intraday partiel/repli OHLC, univers contemporain et prix révisés ; périodes déjà explorées, sans certification PIT ni parité live. Aucun changement de production.
+Archives : `artifacts\research\us_q051_b_sl10_vol20_regime\20261117-v1` ; courbes, comparaison annuelle et reçus des décisions dans ce dossier.
+
+<!-- Q051_B_SL10_DRAWDOWN_AUDIT_20261117 -->
+
+# Audit de la baisse B + anti-SL10 TOP10 fin 2024 / début 2025
+
+Drawdown intraday : -34.98 %, de 2024-11-11 20:40:00+00:00 à 2025-04-07 13:35:00+00:00.
+Attribution distincte en clôture : 2024-11-06 → 2025-04-04, 12764.63 $ → 8414.42 $, soit -4350.20 $ (-34.08 %).
+124 trades clôturés, 29.84 % gagnants ; 86 stops dont 14 pendant la séance d'entrée et 72 plus tard. 13 stops sur gap : -1830.47 $ de PnL total de ces trades, pas une attribution indépendante des autres pertes.
+Exposition brute/capital moyenne intraday de la fenêtre : 90.19 %. Financement : 0.001558 $. Résidu de rapprochement des flux, marques et dividendes : 0.0000000000 $.
+
+Le modèle anti-SL prédit un SL5 pendant la première séance seulement. Dix séances décrit son historique de features, pas dix séances protégées contre les stops. Il ne garantit ni une absence de gap après la première séance, ni un rendement positif à H10. Les scores sont des estimations non garanties.
+La règle SL5 est un seuil de déclenchement ; une ouverture sous ce seuil est exécutée au cours disponible, donc une perte supérieure à 5 % est possible. Le portefeuille continue à prendre de nouvelles entrées : aucun B4/DD, régime ou budget de volatilité ne protège ce témoin.
+
+Les PnL des trades clôturés ne sont pas la variation de capital : celle-ci inclut les positions détenues aux deux bornes. symbol-attribution.csv rapproche exactement les deux. Les secteurs sont ceux du référentiel contemporain, sans garantie historique PIT.
+Les gaps de début de séance sont comparés aux ouvertures journalières et aux impressions 5 minutes disponibles ; les gaps intraday aux seules ouvertures des bougies 5 minutes correspondantes. Cela contrôle la cohérence interne, pas une confirmation indépendante par un autre fournisseur. Couverture intraday partielle, repli OHLC, prix révisés, aucune certification live.
+
+## Comparaison sur la même fenêtre
+
+| Cas | Variation de capital | DD clôture dans la fenêtre | Taux gagnant des sorties |
+| --- | ---: | ---: | ---: |
+| B seul TOP10 | -31.16 % | -38.25 % | 24.44 % |
+| B + anti-SL10 TOP10 | -34.08 % | -34.08 % | 29.84 % |
+| B + anti-SL10 + vol20/régime TOP10 | -24.58 % | -25.72 % | 29.73 % |
+| SPY prix seuls | -14.51 % | -17.56 % | nan % |
+
+Archives : `artifacts\research\us_q051_b_sl10_drawdown_audit\20261117-v2`.
+
+
+## Répétition des pertes et détail du contrôle existant
+
+ROAD subit sept sorties sur la fenêtre, dont cinq stops, pour -459,81 $ de PnL réalisé. AGYS, DECK et PRIM subissent chacun trois stops. La pause100 expérimentale n'est pas activée dans ce témoin.
+
+Point de sémantique vérifié dans le contrôle natif `execution_engine/winner_live_risk.py::concentration_allowed` : le compteur de pertes consécutives utilise les différences de prix brutes, avant frais. Sur ROAD, le trade du 28 janvier au 11 février 2025 gagne 0,75 $ avant frais, mais perd 2,479 $ net. Il remet donc le compteur natif à zéro après les deux pertes précédentes. L'entrée du 12 février reste autorisée. Un contrôle diagnostique avec frais intégrés la refuserait ; aucun replay de ce changement ni correctif de production n'a été lancé. Ce point n'explique pas à lui seul la baisse et ne permet pas de soustraire les pertes suivantes à rendement constant.
+
+La comptabilité de la fenêtre est rapprochée exactement : -4 350,20 $ dont les cinq premiers contributeurs AGYS, ROAD, MMYT, DECK et ARLO expliquent 50,67 % de la baisse nette. Selon les secteurs contemporains, Industrials et Consumer Cyclical contribuent respectivement -1 944,29 $ et -1 579,35 $. Ce classement ne prouve pas une corrélation historique ni un filtre prédictif.
+
+Le témoin n'est protégé ni par B4/DD, ni par régime SPY, ni par budget de volatilité. La moyenne de l'exposition brute sur capital est 90,19 %, les frais de financement de la fenêtre sont de 0,00156 $ : l'endettement n'explique pas la baisse. Les stops, l'exposition persistante, les réentrées et le manque de trades gagnants dominent.
+
+La comparaison avec SPY (-14,51 % sur les mêmes clôtures) montre un contexte de marché défavorable, mais la stratégie perd déjà du terrain quand SPY reste relativement stable en novembre-décembre 2024. Le marché n'explique donc pas tout ; la sélection et le parcours des titres amplifient la perte. Cette lecture est rétrospective et ne démontre pas un mécanisme d'anticipation.
+
+La nouvelle variante vol20/régime est terminée : -24,58 % sur cette fenêtre, mais -11,83 % sur tout 2021–2026 avec DD intraday -37,36 %. La réduction de cette seule baisse ne suffit pas à valider cette variante.
+
+<!-- Q051_B_SPY_SWITCH_STARTED_20261117 -->
+
+## 2026-11-17 — B / B + anti-SL10 TOP10 : bascule SPY de la protection vol20 + régime
+
+Six nouveaux replays autorisés sur 2021–1er octobre2026, capital4000$ continu : deux familles × moyenne SPY20/50/100. Seuils figés : deux clôtures sous98% de la moyenne pour activer, cinq clôtures au-dessus de101% pour désactiver ; état conservé entre les deux, calcul sur toutes les séances avec warmup2019, décision à J pour J+1. Protection active uniquement sur les nouvelles entrées : budget volatilité20%/covariance60 et filtre existant SPY>98% SMA200. Positions détenues : SL5/open11 inchangés. Aucun réentraînement ni réglage de production.
+
+Prévol PASS : portefeuille de base et signaux strictement identiques, trois contrôles de causalité par préfixe, quatre témoins archivés validés arithmétiquement. Dix-sept tests ciblés passés, dont passage natif strictement identique quand la protection est inactive et vérification des confirmations, de la mémoire d'état et des cours futurs. Trois simulations simultanées au maximum. Aucun SQL, fournisseur/LLM ou ordre. Résultats économiques en attente ; six courbes, témoins, SPY, statistiques annuelles et basculements à consolider automatiquement. Années déjà explorées, intraday partiel/repli OHLC et univers contemporain : recherche rétrospective, pas validation indépendante.
+
+Protocole : `doc/ml/q051_b_spy_switch_20261117.md`. Archives et suivi : `artifacts/research/us_q051_b_spy_switch/20261117-v1`.
+
+<!-- Q051_B_SPY_SWITCH_RESULTS_20261117 -->
+
+# B / B + anti-SL10 TOP10 — bascule SPY vol20 + régime
+
+2021–1er octobre2026, 4000$ continus. Six nouveaux replays figés : deux familles × moyennes SPY20/50/100. Activation après deux clôtures SPY sous98% de la moyenne ; désactivation après cinq clôtures au-dessus de101%. Entre les seuils : état conservé. État calculé sur chaque séance, même sans candidat, depuis le warmup2019. Données arrêtées à J pour les nouvelles entrées J+1. Aucune liquidation des positions détenues.
+En mode actif seulement : covariance60 séances/budget annualisé20% et filtre SPY>98% SMA200. Mode normal : approbation native inchangée. Modèles, signaux TOP179 Oracle→TOP10 LONG et veto anti-SL10 éventuel identiques. SL5/open11, sans TP/trailing, risque1,25%, poids20%, plafond achats1×/capacité margin2×, frais8pb/côté et financement6,5%. Sans B4/DD/pause100. Les quatre témoins sont archivés et non recalculés.
+
+| Cas | Capital final | Rendement | DD intraday | Gagnants | Trades |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| B sans protection | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 |
+| B protection permanente | 3780.78$ | -5.48% | -41.91% | 35.69% | 1076 |
+| B + anti-SL10 sans protection | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 |
+| B + anti-SL10 protection permanente | 3526.98$ | -11.83% | -37.36% | 36.18% | 1031 |
+| B bascule MA20 | 6414.84$ | +60.37% | -44.87% | 36.10% | 1227 |
+| B bascule MA50 | 4436.18$ | +10.90% | -51.22% | 36.30% | 1190 |
+| B bascule MA100 | 8080.68$ | +102.02% | -43.90% | 36.66% | 1203 |
+| B + anti-SL10 bascule MA20 | 5419.72$ | +35.49% | -44.78% | 35.04% | 1170 |
+| B + anti-SL10 bascule MA50 | 4767.51$ | +19.19% | -39.33% | 36.19% | 1166 |
+| B + anti-SL10 bascule MA100 | 5510.46$ | +37.76% | -42.37% | 36.67% | 1140 |
+
+Revue des nouvelles détentions : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES, 0 réserves de prix, 6/7081 écarts de labels première séance.
+Recherche rétrospective sur des années déjà explorées, intraday incomplet avec repli OHLC, univers contemporain et prix révisés. Un seuil retenu ici ne sera pas une validation indépendante. Aucun modèle réentraîné, accès SQL, appel fournisseur/LLM, ordre ou changement de production.
+Les comparaisons dans la baisse utilisent la même fenêtre clôture6novembre2024–4avril2025 ; elles ne remplacent pas le DD intraday global. La volatilité cible20% ne plafonne pas le DD. Lire les résultats annuels et les basculements avant toute conclusion.
+Archives : `artifacts\research\us_q051_b_spy_switch\20261117-v1`.
+
+<!-- Q051_B_MARKET_WARNING_AUDIT_20261117 -->
+
+# B / B + anti-SL10 — audit des alertes de marché et de stratégie
+
+17 novembre 2026. Audit terminé, sans nouveau replay, entraînement, SQL, fournisseur/LLM, ordre ou changement de production.
+
+## Pourquoi le rendement et le DD se dégradent
+
+La bascule SPY a été appliquée à toutes les séances de 2021 au 1er octobre2026, pas à une fenêtre choisie après observation. Pour MA50, elle reste active sur 371/1443 séances (25,71%), dont 66,93% des séances2022 et 30% de celles de2025. Pour MA20/100, les parts2022 sont62,15/80,48%.
+En2022, B+anti-SL10 sans protection gagne48,60%, contre -5,49/-11,72/-14,96% pour les bascules20/50/100. La stratégie LONG sélectionnée peut gagner pendant que SPY est baissier ; un filtre de marché coupe alors aussi ses gagnants. En2023 et2026, les rebonds sont également moins capturés.
+Les reçus natifs confirment le mécanisme : pour SL10/MA50 en2022, 60 des86 décisions de budget de volatilité actif aboutissent à zéro action (69,77%). Il s’agit des vérifications actives enregistrées, pas de69,77% de tous les signaux Oracle. Les contraintes de portefeuille changent aussi les autres achats et le chemin du capital.
+Le DD maximal se déplace : SL10/MA50 descend de son sommet du16février2021 au9août2022 (-39,33%), alors que le témoin a son DD maximal du11novembre2024 au7avril2025 (-34,98%). Réduire une baisse donnée ne suffit pas à réduire le DD maximal de toute la stratégie. Aucun achat nouveau n’est garanti gagnant, aucune position détenue n’est liquidée par ce commutateur.
+
+## Données et règles contrôlées avant l’entrée
+
+Dix mesures individuelles et deux conjonctions figées, sans recherche de seuil : SPY/SMA50 et200 ; rendement SPY20 ; volatilité SPY20 au-dessus de sa médiane126 ; part de l’univers au-dessus de SMA50<40% ; part du TOP179 Oracle avec rendement passé20 positif<50% ; momentum médian Oracle20 inférieur au SPY ; profit factor des20 dernières clôtures connues<1 ; rendement passé20 du compte<-5% ; DD du compte sur63séances>10% ; SPY<SMA50 ET PF20<1 ; pool Oracle faible ET compte<-5% sur20.
+Features arrêtées à la clôture du signal J et reliées aux vrais reçus d’entrée J+1. Aucune sortie future dans la santé du compte. Égalités de préfixes : trois pour les prix et six pour la santé des comptes ; quatre tests passent, dont ordre stable de clôtures simultanées. Les cas sans données restent inconnus. Les pools sont les179 candidats causaux initiaux, avant toute qualification future.
+L’audit historique du25octobre2026 sur un ancien TOP20/H20 n’avait déjà validé aucun avertissement transversal. Le présent audit vérifie les règles sur les nouveaux comptes B/H10/TOP10 exacts ; il ne constitue pas une nouvelle source indépendante d’alpha.
+
+## Alertes sur la fenêtre demandée
+
+Fenêtre cible des entrées : 1ernovembre2024–30juin2025. Les dates suivantes sont les premières occurrences dans cette fenêtre, pas des seuils choisis après observation : PF20 du compte SL10 faible dès8novembre ; compte en baisse20<-5% dès5décembre ; univers breadth50<40% et SPY<SMA50 dès18décembre ; SPY<SMA200 seulement10mars2025. Ces premières occurrences peuvent être brèves, et ne garantissent pas une alerte continue.
+Le pool Oracle faible apparaît dès le début de la fenêtre et le5décembre se combine avec la faiblesse du compte. Il se manifeste aussi pendant des périodes profitables : ce n’est pas un détecteur spécifique de la crise2024/25.
+
+## Compromis pertes/gains — B + anti-SL10
+
+Statistiques sur les trades effectivement acceptés, classés par date d’entrée, avec maturité H10 commune connue au1eroctobre2026. PnL net des frais par trade ; financement non artificiellement affecté aux lots. Ce ne sont pas les rendements d’un portefeuille après filtrage.
+
+| Alerte | Trades signalés dans la fenêtre | Pertes ciblées dans la fenêtre | Gains aussi ciblés dans la fenêtre | Gains ciblés hors fenêtre |
+| --- | ---: | ---: | ---: | ---: |
+| SPY sous SMA50 | 44 | 27.05% | 23.18% | 29.25% |
+| Univers : moins de40% au-dessus SMA50 | 43 | 29.74% | 23.91% | 22.48% |
+| Oracle : moins de50% positifs sur20séances | 92 | 71.28% | 41.86% | 59.47% |
+| PF20 du compte <1 | 122 | 81.58% | 69.70% | 43.24% |
+| Compte : rendement20 <-5% | 65 | 46.46% | 29.77% | 13.40% |
+| Oracle faible ET compte faible | 56 | 43.55% | 24.45% | 12.26% |
+
+Le signal Oracle faible seul distingue mieux les pertes de cette fenêtre que SPY, mais il toucherait59,47% des gains effectivement réalisés hors fenêtre. Les trades ainsi signalés hors fenêtre totalisent +10903,20$ sur ce compte. Ce chiffre mesure des opportunités du témoin, pas le capital qu’un replay filtré perdrait exactement.
+La conjonction Oracle faible ET compte faible est plus ciblée : elle touche43,55% de la masse des pertes de la fenêtre et24,45% de ses gains ; hors fenêtre,9,90% des pertes et12,26% des gains. Ses trades signalés hors fenêtre restent rentables (+2714,18$ cumulés). Leur rendement net moyen est supérieur de1,18point à celui des autres trades hors fenêtre ; un veto automatique n’est donc pas validé.
+Les signes annuels s’inversent. Par exemple, Oracle faible signalé−autre sur SL10 : +1,57point2022, -2,59en2023, +1,14en2024, -1,64en2025, +1,15en2026. La faiblesse peut précéder la continuation de la baisse OU un rebond profitable. Les tableaux annuels détaillés sont conservés, sans choisir le sens du filtre après coup.
+
+## Macro et périmètre
+
+VIX/VIX9D/VIX3M/VXN/MOVE/taux10ans sont présents dans une archive locale pour163 dates de la fenêtre. Ces lignes ont été créées en juillet2026 ; la disponibilité et le vintage exacts pour une décision2024/25 ne sont pas qualifiés ici. Elles ne sont pas présentées comme des snapshots disponibles à l’époque et ne participent pas aux règles principales. Voir macro-inventory.json. Les prix SPY/univers sont également des historiques rétrospectifs révisés, pas une certification PIT.
+IWM, QQQ, RSP et les ETF de crédit ne sont pas dans la matrice figée commune à ces comptes. Aucune série nouvelle n’a été téléchargée ou inventée. Les news, options et consensus d’aujourd’hui ne sont pas rétroprojetés en2024.
+
+## Conclusion
+
+**Aucun indicateur audité ne valide simultanément une bonne détection de la fenêtre2024/25 et un faible coût hors de cette fenêtre.** Les mesures du pool Oracle et de la santé réelle du compte sont plus pertinentes à examiner que SPY seul, mais les observations ne justifient pas encore une règle de trading.
+Un éventuel prochain replay pourrait évaluer une réduction partielle des nouvelles entrées sur la conjonction pool faible/compte faible, plutôt qu’un arrêt complet ou un budget covariance20% très contraignant. Ce serait une hypothèse supplémentaire à tester, sans promesse d’amélioration et sans seuil choisi pour épouser la période défavorable. Aucun replay de ce type n’a été lancé.
+
+Les fichiers warning-diagnostics.csv et warning-calendar.csv séparent fenêtre cible, reste, années et données inconnues. budget-impact-by-year.csv, switch-episodes.csv et switch-max-dd-dates.csv expliquent les six simulations existantes. Ne pas soustraire des PnL de trades pour annoncer un rendement ou DD alternatif : la réallocation et le chemin du capital nécessitent un replay complet.
+Limites : période choisie après observation, douze règles examinées, années déjà vues, dépendances titres/dates, univers/secteurs contemporains, intraday incomplet avec repli OHLC, échantillon de trades acceptés conditionné par le capital du témoin. Aucun holdout ou avantage causal indépendant établi.
+
+Archives : `artifacts\research\us_q051_b_market_warning_audit\20261117-v2`.
+
+
+## Audit complémentaire des sorties de protection
+
+La sortie n'avait pas été validée séparément : règle figée de cinq clôtures SPY au-dessus de101% de MA20/50/100. Audit a posteriori uniquement, pas de nouveaux seuils ni de replay. Les résultats20 séances suivants utilisent les clôtures SPY et les capitaux des témoins B/SL10 sans protection, pas le profit causal d'une reprise du compte protégé. Échantillons faibles et dates corrélées entre moyennes.
+
+| Moyenne | Désactivations | SPY positif20séances après | Témoin B positif20 après | Témoin SL10 positif20 après | Retour en protection sous20séances |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20 | 16 | 9/16 | 10/16 | 9/16 | 4 |
+| 50 | 11 | 7/11 | 6/11 | 7/11 | 2 |
+| 100 | 6 | 4/6 | 5/6 | 5/6 | 1 |
+
+Référence descriptive : sur toutes les 1423 dates communes mûres2021–2026, SPY est positif20séances plus tard dans 65.99% des cas. Les occurrences ne sont pas indépendantes ; ce n'est pas un test statistique apparié.
+
+Exemple de fausse reprise : OFF MA50 au signal20février2025, puis SPY -7,35% sur20séances, B -13,07% et SL10 -8,66% sur leurs comptes témoins. Réactivation8séances plus tard le4mars. Reprises postérieures : OFF MA20 le30avril (+6,40% SPY20), MA50 le13mai (+2,47%), MA100 le16mai (+1,43%). Ces exemples sont constatés après coup, sans détecteur permettant de les distinguer à l'avance. Aucun signe de sortie fiable confirmé.
+
+<!-- Q051_WINRATE_RECOVERY_AUDIT_20261117 -->
+
+# Taux de réussite internes et reprise du compte — audit activation/sortie
+
+17 novembre2026. Audit de cinq cohortes : pool Oracle TOP179, sélections B TOP10, sélections B+anti-SL TOP10, trades acceptés des comptes témoins B et B+anti-SL. Aucun nouveau replay, fit, SQL, fournisseur/LLM, ordre ou changement de production.
+
+## Définition précise du taux gagnant
+
+Oracle détecte une amplitude ; le taux mesuré ici est la rentabilité LONG de ses sélections avec SL5/open11 et frais8pb/côté, pas la précision de son amplitude. Pour les sélections, les labels qualifiés déjà archivés sont utilisés ; ils sont théoriques et ne sont pas tous des trades réellement finançables. Les trades effectivement acceptés sont une cohorte différente.
+Tous les résultats attendent la maturité commune J+11 (ouverture11 de détention après entréeJ+1), y compris les stops précoces. Cela évite de faire baisser artificiellement le taux récent en comptant les perdants rapides avant les gagnants encore en cours. Les inconnus ne sont ni des pertes ni des gagnants. Certaines fins d’année manquent dans les archives de labels : des fenêtres, notamment janvier, restent non qualifiées.
+Taux récent :20 séances de maturité. Référence :120 séances de maturité précédentes, sans recouvrement avec les20récentes. Couverture de labels≥80%, minimum40 labels récents/160 de référence pour les sélections ;20/80 pour les trades réellement acceptés. Fenêtre complète140séances, warmup exclu. Les observations peuvent partager un titre et des horizons chevauchants.
+
+## Règle de taux figée, sans recherche de seuil
+
+Activation : taux récent inférieur de5points à la référence, trois clôtures consécutives. La référence est figée lors de cette activation. Désactivation : taux récent revenu à référence figée moins2points, cinq clôtures consécutives. Une référence qui baisserait continuellement pendant la crise pourrait annoncer une fausse reprise ; elle reste donc fixe jusqu’à la sortie.
+Les dates sont des signaux de clôtureJ pour application possibleJ+1. Préfixes reconstruits :15 égalités de taux et15 d’états, trois tests passent. Il s’agit d’un audit de conditions, pas d’un replay de portefeuille appliquant cette protection.
+
+## Résultat sur la baisse ciblée
+
+| Cohorte de sélections | Activation interne | Désactivation interne |
+| --- | --- | --- |
+| Oracle TOP179 | 6janvier2025 | 16mai2025 |
+| Per-symbol B TOP10 | 24décembre2024 | 16mai2025 |
+| Per-symbol B+anti-SL TOP10 | 20décembre2024 | 12juin2025 |
+
+Ces alertes sont plus tardives que les premières pertes de novembre. La maturité H10 impose un délai ; elles pourraient réagir à la dégradation, pas l’anticiper totalement.
+Après la désactivation B du16mai, le compte témoin SL10 sans protection gagne6,24% sur les20séances suivantes, mais recule temporairement jusqu’à4,64% sous son niveau de ce jour. Après la désactivation SL10 du12juin, ce témoin gagne7,28% à20séances. Une reprise finale positive n’exclut pas une baisse intermédiaire.
+
+## Fiabilité descriptive sur toutes les années
+
+Résultat mesuré : hausse du capital du témoin SL10 non protégé20séances après le signal OFF. Ce n’est pas un taux de trades gagnants ni le rendement causal d’un compte qui aurait effectivement repris à ces dates.
+
+| Détecteur | Sorties | Témoin positif20 après | Contrôle sans fenêtres chevauchantes |
+| --- | ---: | ---: | ---: |
+| ORACLE179 | 12 | 8/12 (66.67%) | 8/12 |
+| PER_B10 | 13 | 10/13 (76.92%) | 9/12 |
+| PER_SL10 | 15 | 11/15 (73.33%) | 10/14 |
+| TRADED_B | 6 | 4/6 (66.67%) | 4/6 |
+| TRADED_SL10 | 7 | 3/7 (42.86%) | 3/7 |
+
+Pour comparaison descriptive, le témoin SL10 est positif20séances plus tard dans56,99% des1423dates mûres de toute la période. Les sorties per-symbol B donnent10/13positives (76,92%), mais l’intervalle Wilson approximatif95% s’étend de49,74% à91,82%, avant même de corriger les dépendances temporelles. Échantillon insuffisant, années déjà vues, plusieurs indicateurs examinés : pas de fiabilité prédictive établie.
+Les faux signaux existent : sortie B le16juin2022 suivie de-6,23% du témoin SL10 sur20séances, creux intermédiaire-8,94%. Sortie SL10 le20août2026 suivie de-4,83%. Les bons cas ne suffisent pas à garantir le déclencheur.
+
+## Activation : un avantage encore faible
+
+Le régime dégradé issu du taux per-symbol B signale, sur les trades SL10 évaluables de toutes les années, un rendement net unitaire inférieur de0,82point à celui des autres trades. Hors de la fenêtre novembre2024–juin2025, cet écart reste seulement-0,52point. Mais il concernerait47,58% des gains effectivement réalisés hors fenêtre : ce n’est pas une justification d’arrêt complet. Le taux des seuls trades du compte a encore moins de support et peut rester longtemps en protection.
+
+## Reprise du compte supérieure à5% sur20séances
+
+Condition testée : cinq clôtures consécutives avec rendement20>+5%, après les activations SPY50 existantes. Un compte protégé peut rester presque à plat ; attendre son propre +5% est tardif et peut se bloquer si aucune position n’est détenue. Un compte témoin virtuel indépendant continue la stratégie et évite ce cercle. En backtest, les comptes B/SL10 sans protection déjà calculés remplissent ce rôle ; ce sont des simulations, aucun ordre supplémentaire.
+En2025, le témoin B confirme+5% le8mai, et le témoin SL10 le19mai. Le compte protégé SL10/MA50 ne le confirme que le12juin. Le signal19mai du témoin SL10 est suivi de+5,54% sur20séances dans ce même compte témoin.
+Après dédoublonnage des reprises communes à plusieurs activations SPY, la condition+5% du témoin SL10 donne7reprises positives à20séances sur10dates distinctes (70%). Le critère tiré du compte réellement protégé donne5/8. Cohortes petites, activations SPY préexistantes, pas un test indépendant ou directement comparable aux dates OFF des taux.
+Revenir au taux observé juste avant une protection déjà déclenchée tard peut être trop facile : après ON SPY du4mars2025, le taux B antérieur n’était que20,2%; son retour à ce faible niveau donnerait31mars, avant une nouvelle chute. La référence120 antérieure figée est plus exigeante. Aucun seuil n’a été optimisé pour éviter cet exemple.
+
+## Conclusion
+
+**Les taux de réussite per-symbol mûrs et la reprise d’un compte témoin virtuel sont des candidats plus encourageants pour la sortie que le seul seuil SPY. Ils ne sont pas encore validés comme fiables.** Pour l’activation, le signal du taux apparaît après une partie de la baisse et touche encore beaucoup de gains hors période. L’effet économique sur rendement/DD exige un replay dédié, non réalisé ici.
+Ne pas confondre AUC des modèles, taux LONG profitable de sélections, taux gagnant des trades réellement acceptés, et fréquence de reprise positive du capital. La réussite d’amplitude Oracle n’est pas une réussite directionnelle.
+
+Archives : `artifacts\research\us_q051_winrate_recovery_audit\20261117-v1`. Voir cohort-coverage.csv, recovery-summary.csv, activation-trade-diagnostics.csv, on-off-future-shadow-diagnostics.csv, account-return20-plus5-recovery.csv et les timelines.
+Limites héritées : rétrospectif, univers contemporain, labels journaliers qualifiés parfois manquants, intraday partiel avec repliOHLC, aucun holdout nouveau ni parité live.
+
+<!-- Q051_INTERNAL_HALF_PROTECTION_STARTED_20261117 -->
+
+## 2026-11-17 — B / B + anti-SL TOP10 : protection interne, demi-taille des nouveaux achats
+
+Quatre replays autorisés, 2021–1er octobre2026, capital4000$ continu : B et B+anti-SL, sortie par taux ou par compte témoin virtuel. Déclencheur commun aux deux familles : taux LONG profitable des sélections B TOP10 avant anti-SL, vingt séances mûres contre les120précédentes ; activation après baisse>5points pendant3clôtures. Sortie A : retour à référence figée moins2points pendant5clôtures ; sortie B : témoin continu de la famille>+5% sur20séances pendant5clôtures.
+
+Protection : moitié entière de la quantité approuvée nativement, puis revalidation native. Positions détenues SL5/open11 inchangées, sans TP/trailing. Pas de paquet SPY/vol20/B4/DD/pause100 supplémentaire. Modèles, signaux, risque de base, frais et financement inchangés. Les labels manquants restent inconnus, warmup qualifié en août2021 ; aucune protection inventée avant.
+
+Prévol PASS : portefeuille/signaux identiques,12contrôles de causalité par préfixe et2équivalences de la règle RATE avec l’audit. Dix tests ciblés passent, dont entrée native divisée une seule fois, limites et SL conservés, passage désactivé strictement identique et indépendance du mode RATE par rapport au choix de témoin. Quatre simulations parallèles au maximum. Aucun SQL, téléchargement, LLM, ordre ou changement de production. Résultats économiques en attente ; consolidation automatique des courbes, rendement/DD, taux gagnant, capital engagé, années, basculements et fenêtres de baisse. Recherche rétrospective, pas validation indépendante.
+
+Protocole : `doc/ml/q051_internal_protection_20261117.md`. Archives et suivi : `artifacts/research/us_q051_internal_protection/20261117-v1`.
+
+<!-- Q051_INTERNAL_HALF_PROTECTION_RESULTS_20261117 -->
+
+# B / B + anti-SL TOP10 — protection interne, nouvelles entrées à demi-taille
+
+2021–1er octobre2026,4000$ continus. Quatre replays natifs. Déclencheur commun : taux LONG profitable du TOP10 per-symbol B avant anti-SL, 20 séances mûres contre les120précédentes. Baisse>5points pendant3clôtures pour activer. Sortie A : retour à référence figée moins2points pendant5clôtures. Sortie B : compte témoin virtuel de la famille >+5% sur20séances pendant5clôtures. Décisions àJ pourJ+1 ; étiquettes connues à maturité complèteopen11. Taux inconnu : pas de nouvelle activation ; état existant conservé.
+Protection : floor(quantité approuvée native/2), puis revalidation native ; minimums et quantités entières conservés. Elle ne divise pas nécessairement l’exposition globale par deux : positions existantes, candidats suivants et capital disponible restent dans le moteur. Positions détenues : SL5/open11 inchangés. Sans TP/trailing, sans SPY/vol20/B4/DD/pause100 supplémentaires. Modèles/signaux/risque de base, frais et financement identiques aux témoins.
+
+| Cas | Capital final | Rendement | DD intraday | Gagnants | Trades | Capital engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B témoin | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 | 6401.43$ |
+| B + anti-SL témoin | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 | 7069.05$ |
+| B — demi-taille / sortie taux | 8489.41$ | +112.24% | -38.00% | 35.65% | 1742 | 4524.90$ |
+| B — demi-taille / sortie témoin+5% | 10315.79$ | +157.89% | -33.96% | 34.72% | 1754 | 4646.06$ |
+| B + anti-SL — demi-taille / sortie taux | 8678.67$ | +116.97% | -40.43% | 36.59% | 1607 | 4144.02$ |
+| B + anti-SL — demi-taille / sortie témoin+5% | 6606.19$ | +65.15% | -42.67% | 35.64% | 1574 | 3557.28$ |
+
+Revue : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Réserves prix 0, écarts de labels première séance 4/6664.
+Les deux témoins continus existaient avant ce test et servent aussi de comptes virtuels pour la sortie B ; leurs cours/capitaux futurs ne sont jamais lus à une décisionJ. Les labels de fin d’année manquants restent inconnus ; le warmup qualifié débute en août2021, sans inventer une protection sur le début2021. Les taux sont des proportions de LONG profitables parmi les sélections, pas la précision d’amplitude Oracle ni l’AUC du modèle.
+Recherche rétrospective sur années déjà explorées, univers contemporain et prix révisés ; intraday partiel avec repli OHLC. Aucun nouvel entraînement, label, SQL, fournisseur/LLM, ordre ou changement de production ; pas de holdout neuf ou de parité live.
+Archives : `artifacts\research\us_q051_internal_protection\20261117-v1`. Voir comparaisons annuelles, fenêtres de baisse, basculements et reçus de dimensionnement.
+
+<!-- ORACLE_B_ANTI_SL_NATIVE_20261118 -->
+
+# B + anti-SL témoin — support natif entraînement / filtre automatique
+
+18 novembre 2026. Raccordement demandé, sans nouvelle mesure de performance. Pipeline T1 propose **Ajouter le filtre anti-SL — trajectoire dix séances**, coché par défaut pour le bundle Oracle H10 + per-symbol B29, avec possibilité de décocher. L’entraînement archive une tête mutualisée à 44 variables (B29 + 15 résumés J−9..J), cible SL5 première séance, pool TOP10 % Oracle OOF causal, fit/calibration annuels et seuil Q90 de calibration. Les années sans tête qualifiée sont documentées ; zéro tête entraînable fait échouer le batch.
+
+ML Predict persiste les risques et empreintes dans `oracle_path_anti_sl_predictions`. Les lecteurs natifs, le classement personnalisé du backtest et Q051 PAPER détectent automatiquement la tête et appliquent le veto après le TOP LONG, sans remplissage. Absence de tête pour une année / variables insuffisantes : abstention explicite avec maintien du candidat B, conformément à la recherche ; poids/manifeste déclaré manquant ou corrompu et scores non persistés : erreur. Les batchs sans anti-SL gardent leur comportement. Les routes options/GPT d’amplitude seules refusent ce nouveau contrat pour ne pas contourner son classement LONG.
+
+La case per-symbol du backtest reste activée pour un batch anti-SL. Risque, seuil, statut et exclusions sont visibles. Les protections Winner ne sont pas remplacées par la tête. La cible entraînée reste SL5 première séance ; modifier SL/entrée change l’interprétation. L’horizon des variables passées ne correspond pas à dix séances futures de protection.
+
+Tests : apprentissage LightGBM/Platt et labels synthétiques, parité avec le protocole de recherche, causalité, OOF, calibration Q90, seuils/empreintes corrompus, transaction et relecture SQLite en lecture seule, absence de remplacement, re-classement personnalisé/PAPER, commande T1 et interface. Régressions Oracle/B/risque/sélection/options/LLM contrôlées. Un test annexe TLS (`test_verified_tls_cannot_be_disabled`) rencontre une PermissionError sur le canal de journalisation SSL de l’environnement Windows ; aucune désactivation TLS ou modification de ce contrôle.
+
+Aucun entraînement sur les données réelles, appel fournisseur/LLM, ordre, changement de config.yaml ou de compte effectué. Le profil PAPER courant reste TOP5 / vol20 + régime : l’ajout automatique du veto n’en fait pas le témoin TOP10 sans protections. Pas d’import automatique des poids de recherche, ni de nouvelle revendication de rentabilité ou de parité live. Guide : `doc/ml/oracle_path_anti_sl_pipeline_20261118.md`.
+
+## 18 novembre 2026 — profil IHM B + anti-SL témoin par défaut
+
+La liste des profils du backtest ajoute **B + anti-SL témoin**, désormais sélectionné par défaut. Même portefeuille B TOP10 : TOP10 % Oracle H10 → TOP10 LONG B29, score>0,50/AUC≥0,50, puis veto anti-SL sans remplacement, SL5/open11, sans TP/trailing/renforcement, vol20/régime/B4/DD/facteurs/corrélation/secteurs désactivés, plafond achats1×/capacité margin2×. Le profil exige un batch H10/B29 avec tête anti-SL native entraînée ; il ne fabrique pas le modèle ni ses scores. La réapplication restaure aussi TOP et seuils, sans changer le modèle ni les dates. Les anciens profils restent sélectionnables et les modifications manuelles sont conservées après l’initialisation du nouveau défaut.
+
+La fenêtre de comparaison présente huit courbes avec le cas archivé SL10 de `artifacts/research/us_q051_b_early_sl/20261116-v1` : 16 140,82 $, +303,52 %, DD intraday−34,98 %, taux gagnant38,13 %, 1356trades. Courbe quotidienne et capital final recoupés, validation du pool OOF et sélection sans remplacement, revue arithmétique avec réserve explicitée : 1écart de label sur1354trades qualifiés pour ce cas. Aucun nouveau replay ou entraînement, aucune nouvelle validation hors échantillon. Ce profil témoin n’active pas la protection interne à demi-taille.
+
+90tests ciblés passent, dont interface complète, réapplication, migration du défaut, refus des modèles incompatibles et présence effective de la huitième courbe. Aperçu vérifié : `artifacts/ui_checks/b_anti_sl_profiles_20261118.png`. Aucun changement de production, SQL, compte ou ordre.
+
+<!-- Q051_INTERNAL_LIQUIDATION_RESULTS_20261118 -->
+
+# B / B + anti-SL — liquidation puis vol20 + régime
+
+2021–1er octobre2026, 4000$ continus, deux témoins rejoués identiques aux archives. Activation/reprise figées comme les tests demi-taille ; liquidation à l’ouverture suivante, puis vol20/covariance60 et filtre SPY>98%SMA200 seulement en protection. À OFF : retour aux règles habituelles. Rachat à la même ouverture possible après liquidation si les limites passent.
+
+| Cas | Capital final | Rendement | DD intraday | Gagnants | Trades | Engagé moyen |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B témoin | 15894.14$ | +297.35% | -40.99% | 37.63% | 1419 | 6401.43$ |
+| B + anti-SL témoin | 16140.82$ | +303.52% | -34.98% | 38.13% | 1356 | 7069.05$ |
+| B — liquidation / vol20+régime / sortie taux | 6196.90$ | +54.92% | -48.00% | 37.81% | 1251 | 2766.33$ |
+| B — liquidation / vol20+régime / sortie témoin+5% | 8190.38$ | +104.76% | -39.12% | 36.37% | 1284 | 3224.83$ |
+| B + anti-SL — liquidation / vol20+régime / sortie taux | 7933.75$ | +98.34% | -44.81% | 37.35% | 1178 | 3306.87$ |
+| B + anti-SL — liquidation / vol20+régime / sortie témoin+5% | 7667.96$ | +91.70% | -42.19% | 36.48% | 1198 | 3260.23$ |
+
+Revue : ARITHMETIC_CONTROL_PASS_WITH_PRICE_OR_EVENT_RESERVES. Réserves prix 0 ; écarts de labels 6/7667.
+Frais et financement natifs, capital partagé, quantités entières, SL5/open11 et mêmes signaux. Aucun appel fournisseur/LLM, entraînement, SQL ou ordre réel ; pas de changement de production. Historique déjà exploré, univers contemporain, prix révisés et intraday incomplet/repli OHLC : résultat exploratoire.
+Archives : `artifacts\research\us_q051_internal_liquidation\20261118-v1`.
+
+Revue finale : deux témoins reproduits ; `liquidation-validation.json` PASS pour les 14/13/14/15 liquidations à l’ouverture officielle suivant ON, quantités et frais natifs rapprochés des trades. SPY et covariance consultés uniquement en protection, sans donnée future ni augmentation de la taille approuvée. Le DD maximal des quatre variantes nouvelles tombe en2022 (14juillet,24janvier,15juillet,3novembre), contre7avril2025 pour les témoins. Le DD de la fenêtre novembre2024–juin2025 baisse, mais cela ne suffit pas à améliorer le compromis global : quatre rendements fortement réduits et trois DD globaux aggravés. Réserve de label identique BIDU26février2021 dans les six cas. Aucun seuil réoptimisé ni déploiement.
+
+Contrôle des phases : première activation10août2021, aucune différence avec les témoins jusque-là, première liquidation11août2021. Le24décembre2024 était un épisode ultérieur.3266sélections OFF sans veto supplémentaire, aucun budget vol20 en OFF ; les différences de capital/positions/historique persistent. Réactivations communes28octobre2025,24février2026,17juin2026, et épisodes additionnels SHADOW. En2026, B_SHADOW reprend+64,49% contre+66,61% pour le témoin mais avec environ moitié moins de capital initial ; les deux variantes anti-SL restent réellement plus faibles en pourcentage. Archives complémentaires : `phase-validation.json`, `post-off-normalized.png`, `protection-2026-summary.csv`, `post-mid2025-transitions.csv`. Aucun nouveau replay ou réglage modifié pour cet audit.
+
+<!-- Q051_PROTECTION_FEATURES_SENTINELS_20261118 -->
+
+# B / B + anti-SL — audit des indicateurs et titres sentinelles pour activer/désactiver la protection
+
+18novembre2026. Audit rétrospectif2021–septembre2026, sans nouveau replay économique. Variables Oracle173, B29/anti-SL44, distributions univers/TOP179/B10/anti-SL10, marché/SPY, taux mûrs d’amplitude et LONG, fréquence distincte deSL première séance, probabilités/AUC, risques/veto anti-SL et comptes témoins virtuels. 1815mesures de base,5581colonnes après scores/distributions/variations/moyennes ; mesures très corrélées, pas autant de sources indépendantes.
+
+Sentinelles :1759titres admissibles,8indicateurs,2cibles =28144tests. Sélection uniquement2021–2022 puis paniers5/10figés. AUC d’alerte du panier10 :0,85/0,85 sur les années de sélection, puis0,49 en2023,0,55 en2024,0,31 en2025,0,33 en2026. Panier10 de reprise :0,66/0,35/0,53/0,62 sur2023–2026. Pas de liste de titres fidèles confirmée, pas d’inversion du sens après lecture des mauvaises années.
+
+Cible principale : risque de baisse>5%du compte témoin anti-SL dans les20clôtures suivantes ; reprise =rendement20positif sans ce passage sous−5%. Ce ne sont ni des labels directionnels par titre ni un DD intraday. Taux LONG utilisés seulement àJ+11 ; SL première séance àJ+2 séparément ; données inconnues conservées. Découverte2021, confirmation2022, calibration2023, nomination2024 purgée des diagnostics connus seulement2025, évaluation2025–2026. Historique déjà exploré : aucun nouveau holdout indépendant.
+
+Six combinaisons de niveaux bruts ne déclenchent jamais après2023 : décalage de distribution/calibration. Quatre combinaisons de rangs passés253séances avec confirmation supplémentaire2023 ne passent pas la nomination2024 ; AUC combinée2025–2026 proche0,50. Une première analyse relative ayant retenu un compteur de couverture est exclue ; reprise qualifiée sans variables de disponibilité. Sensibilité macro :120colonnes supplémentaires à partir de VIX/VIX9D/VIX3M/VXN/MOVE/taux10ans, historique SQL1696dates2020–octobre2026, versions historiques non certifiées. Quatre règles supplémentaires, aucun candidat nommé. Contrôle final des14règles sur la nomination2024 purgée : zéro succès. Sensibilité5/10séances à variables/sens figés et comparaison des anciens basculements archivées.
+
+La combinaison relative illustrative manque la baisse fin2024–avril2025 puis se réactive9juillet2025. Les sentinelles ne corrigent pas ce calendrier. L’ancien contrôleur peut sortir sur une reprise positive mais trop tard ; quelques sorties positives ne suffisent pas à qualifier le rendement/DD.
+
+Inventaire SQL38tables en lecture seule : historiquesSEC significatifs présents (106836lignes/5720symboles avec disponibilité2020–octobre2026), mais signal fondamental dédié non testé avant qualification accession/versions/unités/prix ; options/borrow/documents observés surtout depuis septembre2026, consensus sans plage globale prouvée dans cet audit (requête bornée échouée), news/sentiment non assimilés à un historique PIT certifié. Ni absence de donnéesSEC ni pouvoir prédictif des tables brutes supposés. L’ancien inventaire macro partiel163dates est corrigé par le complémentSQL.
+
+Conclusion : **pas de combinaison suffisamment fiable trouvée pour remplacer le contrôleur, pas d’impossibilité générale démontrée**. Pas de nouveau seuil retenu pour expliquer uniquement2024/25.15tests ciblés passent, contrôles de préfixe et empreintes archivés. Aucun entraînementOracle/per-symbol, téléchargement, appelLLM, écritureSQL, ordre ou changement de production. Les témoins sources conservent leurs limites de prix révisés, univers contemporain et intraday partiel/repliOHLC.
+
+Rapport : `doc/ml/q051_protection_feature_audit_20261118.md`. Archives : `artifacts/research/us_q051_protection_feature_audit/20261118-v1`, dont `sentinel-stability.png`, `warning-timing-diagnostic.png`, `nomination-2024-purged.csv` et `final-audit-status.json`.

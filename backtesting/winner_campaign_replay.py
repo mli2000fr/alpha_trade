@@ -295,6 +295,9 @@ def run(args):
                     from backtesting.per_symbol_selection import attach_calibration_auc
                     ranked=attach_calibration_auc(ranked,root)
                 ranked=select_per_symbol(ranked,directional_selection)
+                if 'anti_sl_rejected' in ranked:
+                    LOG.info('Anti-SL du batch automatique : %d LONG exclus après le TOP, %d abstentions explicites, sans remplacement',
+                        int(ranked.anti_sl_rejected.sum()),int(ranked.anti_sl_probability.isna().sum()))
                 LOG.info('Sélection per-symbol : %d LONG dans le TOP avant seuil, %d refusés par score, %d avant filtre AUC ; seuil=%s (strict >)',
                     int(ranked.long_selected_before_threshold.sum()),
                     int(ranked.reason.eq('LONG_SCORE_NOT_ABOVE_THRESHOLD').sum()),int(ranked.long_selected_before_auc.sum()),

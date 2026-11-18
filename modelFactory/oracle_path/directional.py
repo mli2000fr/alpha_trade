@@ -34,8 +34,11 @@ class Settings:
     stop_loss_pct: float = .05
     horizon_sessions: int = 10
     fee_per_leg: float = .0008
+    feature_mode: str = 'compact'
 
     def __post_init__(self):
+        if self.feature_mode not in ('compact','compact_volatility','oracle'):
+            raise ValueError('Directional feature mode must be compact, compact_volatility or oracle')
         if type(self.enabled) is not bool or any(type(v) is not int for v in
                 (self.oracle_top_n,self.selected_n,self.horizon_sessions)):
             raise ValueError('Bundle parcours : booléen et nombres entiers requis')
@@ -47,12 +50,13 @@ class Settings:
                 raise ValueError('Bundle parcours : '+name+' invalide')
 
 
-def settings(horizon=None):
+def settings(horizon=None,feature_mode=None):
     from common.config_loader import load_config
     values=dict((load_config().get('oracle_path') or {}).get('directional') or {})
     if horizon is not None:
         from . import validate_horizon
         values['horizon_sessions']=validate_horizon(horizon)
+    if feature_mode is not None:values['feature_mode']=feature_mode
     return Settings(**values)
 
 
@@ -65,6 +69,9 @@ def use_long_selection(protocol, requested=None):
         raise ValueError('Sélection per-symbol LONG : booléen requis')
     if requested is True and not enabled(protocol):
         raise ValueError('Ce batch ne contient pas de modèles per-symbol LONG ; choisir un bundle parcours')
+    if requested is False:
+        from .anti_sl import enabled as anti_enabled
+        if anti_enabled(protocol):raise ValueError('Batch anti-SL : conserver la sélection per-symbol LONG active pour appliquer le veto automatique.')
     return enabled(protocol) if requested is None else requested
 
 
@@ -75,7 +82,9 @@ def requested(artifacts_dir,batch):
     return p.is_file() and enabled(json.loads(p.read_text(encoding='utf-8')))
 
 
-def panels(bars,benchmark,calendar):
+def panels(bars,benchmark,calendar,*,feature_mode='compact'):
+    from .directional_features import compact_columns,VOLATILITY_INPUTS,VOLATILITY_CONTEXT
+    columns=compact_columns(feature_mode)
     from common.daily_bar_sources import select_daily_bars
     from modelFactory.features import compute_features
     bars=select_daily_bars(bars.copy()).sort_values('date')
@@ -89,14 +98,18 @@ def panels(bars,benchmark,calendar):
           &grid[['open','high','low','close']].gt(0).all(axis=1)&grid.is_filled.eq(0)
           &grid.volume.gt(0)&grid.instrument_id.notna())
     grid.loc[~good,['open','high','low','close','adj_close','volume','vwap']]=np.nan
-    f=compute_features(grid,benchmark_df=benchmark,feature_set='expert',include_factors=False)
+    f=compute_features(grid,benchmark_df=benchmark,feature_set='expert',
+        include_factors=feature_mode=='compact_volatility')
     f=f.set_index('date').reindex(calendar)
     for c in DELTAS:
         f[c+'_delta5']=(f[c]-f[c].shift(5)).where(f[c].notna().rolling(6).sum().eq(6))
-    f=f.rename_axis('date').reset_index()[['date',*INPUTS]]
-    f['symbol']=symbol
     recent=good.rolling(60,min_periods=60).sum().eq(60).to_numpy()
-    return f.loc[recent & f[INPUTS].notna().mean(axis=1).ge(.8)].copy()
+    eligible=recent & f[INPUTS].notna().mean(axis=1).ge(.8).to_numpy()
+    if feature_mode=='compact_volatility':
+        eligible &= np.isfinite(f[VOLATILITY_INPUTS+VOLATILITY_CONTEXT].to_numpy(float)).all(axis=1)
+    f=f.rename_axis('date').reset_index()[['date',*columns]]
+    f['symbol']=symbol
+    return f.loc[eligible].copy()
 
 
 def labels(bars,calendar,contract,breaks=()):
@@ -151,7 +164,7 @@ def split(panel,year,side):
             good[good.date.ge(a)&good.date.lt(b)&good.available.lt(b)])
 
 
-def train(cfg,engine,root,progress):
+def train(cfg,engine,root,progress,*,oracle_features=None,benchmark=None,years=None):
     import joblib
     from sklearn.impute import SimpleImputer
     from sklearn.pipeline import make_pipeline
@@ -164,6 +177,9 @@ def train(cfg,engine,root,progress):
     root=Path(root)
     protocol=json.loads((root/'protocol.json').read_text())
     contract=Settings(**protocol['directional_contract'])
+    from .directional_features import input_columns,training_matrix,oracle_panels
+    columns=input_columns(root,protocol)
+    if contract.feature_mode=='oracle' and oracle_features is None:oracle_features=training_matrix(root)
     if contract.horizon_sessions!=protocol['horizon']:
         raise ValueError('Horizon du bundle différent de l’Oracle parcours')
     folder=root/'directional';folder.mkdir(exist_ok=True)
@@ -175,11 +191,13 @@ def train(cfg,engine,root,progress):
     atomic_json(marker,dict(status='RUNNING',oracle_protocol_sha256=digest(root/'protocol.json')))
     start,end=pd.Timestamp(cfg.data.training_start_date),pd.Timestamp(cfg.data.training_end_date)
     calendar=nyse_sessions(start.date(),end.date())
-    bench=load_benchmark_bars(engine,benchmark_symbol=cfg.data.benchmark_symbol,start_date=str(start.date()),end_date=str(end.date()))
+    bench=(benchmark.copy() if benchmark is not None else load_benchmark_bars(engine,
+        benchmark_symbol=cfg.data.benchmark_symbol,start_date=str(start.date()),end_date=str(end.date())))
     benchmark_file=folder/'benchmark.parquet'
     bench.to_parquet(benchmark_file,index=False)
     registry=load_security_discontinuities()
     records=[];sources={};skipped=[];oos_files=[]
+    feature_groups=(oracle_features.groupby('symbol',sort=False).indices if oracle_features is not None else {})
     files=sorted((root/'chunks').glob('*/bars.parquet'))
     total=len(protocol['universe']);done=0
     for file in files:
@@ -188,9 +206,13 @@ def train(cfg,engine,root,progress):
         for symbol,g in bars.groupby('symbol'):
             if not re.fullmatch(r'[A-Z0-9.^_-]+',symbol):raise ValueError('Symbole de modèle invalide')
             progress('directional',done,total,symbol);done+=1
-            f=panels(g,bench,calendar)
+            symbol_features=(oracle_features.iloc[feature_groups[symbol]] if symbol in feature_groups
+                else oracle_features.iloc[:0]) if oracle_features is not None else None
+            f=(oracle_panels(g,calendar,symbol_features,columns) if contract.feature_mode=='oracle'
+                else panels(g,bench,calendar,feature_mode=contract.feature_mode))
             panel=f.merge(labels(g,calendar,contract,registry.get(symbol,())),on='date',validate='one_to_one')
             for year in range(start.year+2,end.year+2):
+                if years is not None and year not in years:continue
                 for side in ['long','short']:
                     fit,cal=split(panel,year,side)
                     if (len(fit)<756 or len(cal)<126 or
@@ -198,15 +220,17 @@ def train(cfg,engine,root,progress):
                         cal[side].value_counts().reindex([0.,1.],fill_value=0).min()<15):
                         skipped.append(dict(symbol=symbol,year=year,side=side,reason='INSUFFICIENT_HISTORY_OR_CLASSES'))
                         continue
-                    lo,hi=fit[INPUTS].quantile(.01),fit[INPUTS].quantile(.99)
-                    x=fit[INPUTS].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
-                    z=cal[INPUTS].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
-                    model=make_pipeline(SimpleImputer(strategy='median').set_output(transform='pandas'),LGBMClassifier(
+                    lo,hi=fit[columns].quantile(.01),fit[columns].quantile(.99)
+                    x=fit[columns].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
+                    z=cal[columns].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
+                    imputer=(SimpleImputer(strategy='median',keep_empty_features=True) if contract.feature_mode!='compact'
+                        else SimpleImputer(strategy='median'))
+                    model=make_pipeline(imputer.set_output(transform='pandas'),LGBMClassifier(
                         n_estimators=120,max_depth=3,num_leaves=7,learning_rate=.03,
                         min_child_samples=60,reg_alpha=1.,reg_lambda=10.,verbosity=-1,n_jobs=1,
                         random_state=cfg.reproducibility.seed))
                     model.fit(x,fit[side].astype(int))
-                    cp=np.clip(named_predict_proba(model,z,INPUTS)[:,1],1e-6,1-1e-6)
+                    cp=np.clip(named_predict_proba(model,z,columns)[:,1],1e-6,1-1e-6)
                     if np.std(cp)<=1e-6:
                         skipped.append(dict(symbol=symbol,year=year,side=side,reason='CONSTANT_CALIBRATION'))
                         continue
@@ -214,6 +238,7 @@ def train(cfg,engine,root,progress):
                     calibrator.fit(np.log(cp/(1-cp)).reshape(-1,1),cal[side].astype(int))
                     path=folder/symbol/f'{side}-{year}.joblib';path.parent.mkdir(exist_ok=True)
                     weights=dict(model=model,calibrator=calibrator,lo=lo,hi=hi)
+                    if contract.feature_mode!='compact':weights['features']=columns
                     joblib.dump(weights,path,compress=3)
                     record=dict(symbol=symbol,year=year,side=side,file=str(path.relative_to(root)),
                         sha256=digest(path),fit_start=str(fit.date.min().date()),fit_end=str(fit.date.max().date()),
@@ -232,12 +257,15 @@ def train(cfg,engine,root,progress):
             frame.to_parquet(path,index=False)
             oos_files.append(dict(path=str(path.relative_to(root)),sha256=digest(path),rows=len(frame)))
     if not any(r['side']=='long' for r in records):raise ValueError('Aucun modèle LONG annuel qualifié')
-    result=dict(status='COMPLETED',schema_version=1,contract=asdict(contract),features=INPUTS,
+    result=dict(status='COMPLETED',schema_version=1,contract=protocol['directional_contract'],features=columns,
         oracle_protocol_sha256=digest(root/'protocol.json'),source_hashes=sources,models=records,skipped=skipped,
         benchmark_file=str(benchmark_file.relative_to(root)),benchmark_sha256=digest(benchmark_file),
         oos_files=oos_files,
         selection_policy='ORACLE_TOP_N_THEN_LONG_TOP_N_NO_REFILL',serving_side='long',
         short_limitations='No borrow, locate or dividend costs; archived branch only')
+    if contract.feature_mode=='oracle':
+        result['oracle_feature_profile_sha256']=digest(root/'feature_profile.json')
+    if years is not None:result['requested_years']=sorted(years)
     atomic_json(marker,result)
     return result
 
@@ -247,13 +275,17 @@ def load_manifest(root):
     root=Path(root);path=root/'directional/manifest.json'
     m=json.loads(path.read_text(encoding='utf-8'))
     p=json.loads((root/'protocol.json').read_text(encoding='utf-8'))
+    from .directional_features import input_columns
+    columns=input_columns(root,p)
     if (not enabled(p) or p.get('horizon') not in (10,15,20)
         or m.get('contract',{}).get('horizon_sessions')!=p.get('horizon')
         or m.get('status')!='COMPLETED' or m.get('oracle_protocol_sha256')!=digest(root/'protocol.json')
-        or m.get('features')!=INPUTS or m.get('contract')!=p.get('directional_contract')
+        or m.get('features')!=columns or m.get('contract')!=p.get('directional_contract')
         or m.get('serving_side')!='long'):
         raise ValueError('Bundle parcours directionnel absent/incomplet/incompatible')
     Settings(**m['contract'])
+    if m['contract'].get('feature_mode','compact')=='oracle' and m.get('oracle_feature_profile_sha256')!=digest(root/'feature_profile.json'):
+        raise ValueError('Directional Oracle feature profile changed')
     if m.get('benchmark_file'):
         benchmark=(root/m['benchmark_file']).resolve()
         if not benchmark.is_relative_to(root.resolve()) or digest(benchmark)!=m.get('benchmark_sha256'):
@@ -293,7 +325,7 @@ def rank(scores,probabilities,contract):
     return a
 
 
-def infer(engine,root,scores):
+def infer(engine,root,scores,*,oracle_features=None,bar_frame=None):
     import joblib
     from .labels import load_bars
     from modelFactory.data_loader import load_benchmark_bars
@@ -302,15 +334,40 @@ def infer(engine,root,scores):
     scores=scores.copy();scores['date']=pd.to_datetime(scores.date).dt.normalize()
     first,last=scores.date.min(),scores.date.max();start=first-pd.Timedelta(days=650)
     protocol=json.loads((Path(root)/'protocol.json').read_text())
-    bench=load_benchmark_bars(engine,benchmark_symbol=protocol['training_config']['data']['benchmark_symbol'],
-        start_date=str(start.date()),end_date=str(last.date()))
+    from . import anti_sl
+    anti_active=anti_sl.enabled(protocol);anti_features=[]
+    if c.feature_mode=='compact_volatility':
+        # B z-scores normalize against up to 1260 sessions, plus the volatility
+        # lookback itself. Keep the same origin as training; 650 calendar days
+        # silently changes their historical normalization and fitted scores.
+        start=pd.Timestamp(protocol['training_config']['data']['training_start_date'])
+    from .directional_features import oracle_panels
+    columns=m['features']
+    if c.feature_mode=='oracle':
+        if oracle_features is None:
+            from .predict import build_inference_features
+            profile=json.loads((Path(root)/'feature_profile.json').read_text(encoding='utf-8'))
+            oracle_features=build_inference_features(engine,protocol['universe'],str(first.date()),str(last.date()),profile['generator_options'])
+        bench=None
+    else:
+        bench=load_benchmark_bars(engine,benchmark_symbol=protocol['training_config']['data']['benchmark_symbol'],
+            start_date=str(start.date()),end_date=str(last.date()))
     calendar=nyse_sessions(start.date(),last.date())
     records={(r['symbol'],r['year'],r['side']):r for r in m['models']}
+    feature_groups=(oracle_features.groupby('symbol',sort=False).indices if oracle_features is not None else {})
     names=sorted(set(scores.symbol));out=[];cache={}
     for offset in range(0,len(names),25):
-        bars=load_bars(engine,names[offset:offset+25],str(start.date()),str(last.date()))
+        bars=(bar_frame[bar_frame.symbol.isin(names[offset:offset+25])].copy() if bar_frame is not None
+            else load_bars(engine,names[offset:offset+25],str(start.date()),str(last.date())))
         for symbol,g in bars.groupby('symbol'):
-            f=panels(g,bench,calendar);f=f[f.date.between(first,last)].set_index('date')
+            symbol_features=(oracle_features.iloc[feature_groups[symbol]] if symbol in feature_groups
+                else oracle_features.iloc[:0]) if oracle_features is not None else None
+            f=(oracle_panels(g,calendar,symbol_features,columns) if c.feature_mode=='oracle'
+                else panels(g,bench,calendar,feature_mode=c.feature_mode))
+            if anti_active:
+                history=anti_sl.path_features(f,calendar)
+                anti_features.append(history[history.date.between(first,last)])
+            f=f[f.date.between(first,last)].set_index('date')
             for row in scores[scores.symbol.eq(symbol)].itertuples():
                 item=dict(date=row.date,symbol=symbol,long_probability=None,short_probability=None,long_model_sha256=None,short_model_sha256=None)
                 for side in ['long','short']:
@@ -320,14 +377,19 @@ def infer(engine,root,scores):
                     # Models are local, hashed artifacts of the selected batch, never user uploads.
                     if record['file'] not in cache:cache[record['file']]=joblib.load(Path(root)/record['file'])
                     weights=cache[record['file']]
-                    x=f.loc[[row.date],INPUTS].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
-                    prob=np.clip(named_predict_proba(weights['model'],x,INPUTS)[:,1],1e-6,1-1e-6)
+                    if weights.get('features',INPUTS)!=columns:raise ValueError('Directional weights feature order differs')
+                    x=f.loc[[row.date],columns].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
+                    prob=np.clip(named_predict_proba(weights['model'],x,columns)[:,1],1e-6,1-1e-6)
                     item[side+'_probability']=float(weights['calibrator'].predict_proba(np.log(prob/(1-prob)).reshape(-1,1))[0,1])
                     item[side+'_model_sha256']=record['sha256']
                 out.append(item)
     cols=['date','symbol','long_probability','short_probability','long_model_sha256','short_model_sha256']
     result=rank(scores,pd.DataFrame(out,columns=cols),c)
     result['manifest_sha256']=checksum
+    if anti_active:
+        features=(pd.concat(anti_features,ignore_index=True) if anti_features else pd.DataFrame(columns=['date','symbol',*anti_sl.columns()]))
+        risks=anti_sl.score_features(root,scores,features)
+        result=anti_sl.apply_filter(result.merge(risks,on=['date','symbol'],validate='one_to_one'))
     return result
 
 
@@ -356,6 +418,11 @@ def write_predictions(engine,frame,batch_id):
         ','.join(k+'=VALUES('+k+')' for k in cols))
     with engine.begin() as conn:
         conn.execute(text(DDL))
+        from .anti_sl import FIELDS
+        if any(c in frame for c in FIELDS):
+            if not set(FIELDS)<=set(frame):raise ValueError('Scores anti-SL incomplets à persister')
+            from .anti_sl_store import write
+            write(conn,frame,batch_id)
         if rows:conn.execute(insert,rows)
     LOG.info('Bundle parcours batch=%s : %d lignes, %d sélectionnées LONG, aucune sélection SHORT',
              batch_id,len(rows),int(frame.selected.sum()))
@@ -384,6 +451,12 @@ def validate_saved(root,oracle,saved):
                 raise ValueError('Score directionnel non causal ou autre modèle')
     columns=['date','symbol','long_probability','short_probability','long_model_sha256','short_model_sha256']
     computed=rank(a,b[columns],c).sort_values(['date','symbol']).reset_index(drop=True)
+    from .anti_sl import enabled as anti_enabled,FIELDS,apply_filter
+    protocol=json.loads((Path(root)/'protocol.json').read_text())
+    if anti_enabled(protocol):
+        from .anti_sl_store import validate
+        risks=validate(root,a,b)
+        computed=apply_filter(computed.merge(risks,on=['date','symbol'],validate='one_to_one'))
     archived=b.sort_values(['date','symbol']).reset_index(drop=True)
     for col in ['oracle_rank','long_rank','selected','reason']:
         if not computed[col].fillna(-1).eq(archived[col].fillna(-1)).all():
@@ -405,6 +478,12 @@ def read_predictions(engine,root,oracle,batch_id,*,cutoff=None):
     with engine.connect() as conn:
         saved=pd.read_sql(query,conn,params=dict(batch=batch_id,start=days.min().date(),end=days.max().date(),
             symbols=sorted(set(a.symbol)),epoch=now.timestamp(),cutoff=now.astimezone(timezone.utc).replace(tzinfo=None)))
+    from .anti_sl import enabled as anti_enabled
+    if anti_enabled(json.loads((Path(root)/'protocol.json').read_text())):
+        from .anti_sl_store import read
+        risks=read(engine,root,a,batch_id,cutoff=now)
+        saved['prediction_date']=pd.to_datetime(saved.prediction_date).dt.normalize()
+        saved=saved.merge(risks.rename(columns={'date':'prediction_date'}),on=['prediction_date','symbol'],validate='one_to_one')
     return validate_saved(root,a,saved)
 
 
