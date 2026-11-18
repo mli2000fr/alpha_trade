@@ -96,7 +96,7 @@ us_pipeline:
     enabled: true
     model_batch_id: model-factory-20261118172104-2f6a31  # Étape10 autorisée seulement après publication complète de l'entraînement.
     artifacts_dir: artifacts/models
-    apply_anti_sl: false  # false = B témoin ; true = B + anti-SL. Choix figé par sélection10, repris à11/12.
+    apply_anti_sl: true  # false = B témoin ; true = B + anti-SL. Choix figé par sélection10, repris à11/12.
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
   # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.
