@@ -136,11 +136,13 @@ def test_execution_real_fills_partial_pending_and_gross_amount():
     assert 'Photographie de fin' in message and 'pas un PnL' in message
 
 
-def test_pending_does_not_use_decision_or_limit_price():
+def test_pending_uses_reference_for_allocation_but_never_fabricates_fill():
     row = order(filled_qty=0, avg_fill_price=None, decision_price=999, limit_price=998,
                 broker_status='NEW')
     message = alerts.execution_message(execution_summary(), [row])
-    assert '999' not in message and '998' not in message
+    assert 'prix de référence 999 USD' in message and '998' not in message
+    assert 'capital alloué indicatif 9990.00 USD' in message
+    assert 'exécuté 10 à 999' not in message
     assert 'Prix et montant exécutés encore indisponibles' in message
 
 
@@ -203,10 +205,14 @@ def db():
             run_id TEXT, account_id TEXT, trade_date TEXT, symbol TEXT, side TEXT, shares REAL)'''))
         conn.execute(text('''CREATE TABLE execution_order_requests (
             request_id TEXT PRIMARY KEY, exec_run_id TEXT, account_id TEXT,
-            symbol TEXT, side TEXT, target_qty REAL, intent_role TEXT, status TEXT, created_at TEXT)'''))
+            symbol TEXT, side TEXT, target_qty REAL, intent_role TEXT, status TEXT, created_at TEXT,
+            decision_price REAL)'''))
         conn.execute(text('''CREATE TABLE execution_broker_orders (
             request_id TEXT, exec_run_id TEXT, account_id TEXT, broker_order_id TEXT,
             normalized_status TEXT, filled_qty REAL, avg_fill_price REAL)'''))
+        conn.execute(text('''CREATE TABLE execution_targets_snapshot (
+            exec_run_id TEXT, account_id TEXT, trade_date TEXT,
+            symbol TEXT, side TEXT, entry_price REAL)'''))
     yield engine
     engine.dispose()
 
@@ -234,7 +240,7 @@ def test_execution_reads_exact_oms_run_account_and_no_writes(db, transport):
         for request, run, account, symbol in [('q1', 'exec-1', 'default', 'YES'),
             ('q2', 'other', 'default', 'WRONGRUN'), ('q3', 'exec-1', 'other', 'WRONGACCOUNT')]:
             conn.execute(text('INSERT INTO execution_order_requests VALUES '
-                '(:q,:r,:a,:s,"buy",10,"entry","SUBMITTED","now")'),
+                '(:q,:r,:a,:s,"buy",10,"entry","SUBMITTED","now",12.5)'),
                 dict(q=request, r=run, a=account, s=symbol))
             conn.execute(text('INSERT INTO execution_broker_orders VALUES '
                 '(:q,:r,:a,:q,"FILLED",10,12.5)'), dict(q=request, r=run, a=account))
@@ -242,8 +248,55 @@ def test_execution_reads_exact_oms_run_account_and_no_writes(db, transport):
     message = transport.call_args.args[0]
     assert 'YES — LONG — exécuté 10 à 12.5' in message
     assert 'WRONGRUN' not in message and 'WRONGACCOUNT' not in message
+    assert 'capital alloué indicatif 125.00 USD' in message
     with db.connect() as conn:
         assert conn.execute(text('SELECT count(*) FROM execution_order_requests')).scalar() == 3
+
+
+def test_allocation_excludes_protections_rejections_and_duplicate_requests():
+    rows = [order(request_id='entry', decision_price=12.5),
+            order(request_id='entry', decision_price=12.5),
+            order(symbol='STOP', intent_role='initial_stop', side='sell', decision_price=8),
+            order(symbol='TP', intent_role='take_profit', side='sell', decision_price=15),
+            order(symbol='REJECT', filled_qty=0, broker_status='REJECTED', decision_price=20),
+            order(symbol='PART', request_id='partial', filled_qty=2, avg_fill_price=11,
+                  decision_price=99, broker_status='CANCELED')]
+    allocations = alerts._entry_allocations(rows)
+    assert [r['symbol'] for r in allocations] == ['ABC', 'PART']
+    lines = '\n'.join(alerts._allocation_lines(allocations))
+    assert 'renseigné : 147.00 USD' in lines
+    assert 'PART — LONG — prix exécuté 11 USD — quantité 2' in lines
+    assert 'STOP' not in lines and 'REJECT' not in lines
+
+
+def test_pending_winner_plans_use_exact_snapshot_and_initial_quantity(db, transport):
+    plans = [dict(symbol=s, outcome='PLAN_ARMED', initial_quantity=2, full_quantity=4)
+             for s in ('WAIT', 'UNKNOWN', 'REJECT')]
+    plans.append(dict(symbol='OLD', outcome='EXISTING_PLAN_NOT_OVERWRITTEN', initial_quantity=5))
+    with db.begin() as conn:
+        for run, account, day, symbol, price in [
+            ('exec-1', 'default', '2026-10-16', 'WAIT', 10),
+            ('other', 'default', '2026-10-16', 'WAIT', 999),
+            ('exec-1', 'second', '2026-10-16', 'WAIT', 998),
+            ('exec-1', 'default', '2026-10-15', 'WAIT', 997),
+            ('exec-1', 'default', '2026-10-16', 'OLD', 996)]:
+            conn.execute(text('INSERT INTO execution_targets_snapshot VALUES (:r,:a,:d,:s,"long",:p)'),
+                         dict(r=run, a=account, d=day, s=symbol, p=price))
+        conn.execute(text('INSERT INTO execution_order_requests VALUES '
+            '("reject","exec-1","default","REJECT","buy",2,"entry","REJECTED","now",10)'))
+    summary = execution_summary(plans=plans)
+    summary.pop('submitted_orders')
+    summary['submitted'] = 0
+    assert alerts.notify_execution(db, summary)
+    message = transport.call_args.args[0]
+    assert 'ordres soumis : 0' in message
+    assert 'WAIT — LONG — prix de référence 10 USD — quantité 2 — capital alloué indicatif 20.00 USD' in message
+    assert 'UNKNOWN — LONG — prix de référence ? USD — quantité 2 — capital alloué indicatif indisponible' in message
+    assert 'renseigné : 20.00 USD ; 1 montant(s) indisponible(s)' in message
+    allocation_text = message.split('Titres retenus — nouvelles entrées / plans :', 1)[1]
+    assert 'REJECT' not in allocation_text and 'OLD' not in allocation_text
+    assert '999' not in message and '998' not in message and '997' not in message
+    assert 'soumission non confirmée' in message
 
 
 @pytest.mark.parametrize('kind', ['dry', 'live', 'simulate', 'non-us'])

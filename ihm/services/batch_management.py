@@ -12,6 +12,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -383,7 +384,12 @@ def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> li
     ]
 
 
-def build_run_command(spec: BatchSpec) -> list[str]:
+def build_run_command(spec: BatchSpec, *, recovery_date: str | None = None) -> list[str]:
+    if recovery_date is not None:
+        if (spec.name != 'us_pipeline' or Path(spec.catalog_path).name != 'batch.yaml'
+                or date.fromisoformat(recovery_date).isoformat() != recovery_date):
+            raise ValueError('Rattrapage réservé au batch US pour une séance YYYY-MM-DD')
+        return build_run_command(spec) + ['-RecoverySessionDate', recovery_date]
     if not supports_batch_execution(spec):
         raise ValueError('Launcher CN non raccordé ; exécution US interdite')
     if Path(spec.catalog_path).name == "batch_fr.yaml":
@@ -497,13 +503,36 @@ def uninstall_all_batches(
     return results
 
 
-def start_batch(spec: BatchSpec, *, db_config: dict[str, str | None] | None = None) -> PipelineRunRecord:
+def us_pipeline_recovery_state(spec: BatchSpec) -> dict[str, Any]:
+    """Read-only button qualification; no provider or broker calls."""
+    if spec.name != 'us_pipeline' or Path(spec.catalog_path).name != 'batch.yaml' or not spec.runnable:
+        return {'visible':False, 'eligible':False}
+    from datetime import UTC, datetime
+    from service.forward_pit.us_pipeline_recovery import recovery_session, recovery_state
+    try:
+        now = datetime.now(UTC)
+        if recovery_session(now) is None:
+            return {'visible':False, 'eligible':False}
+        from ihm.services.db import get_engine
+        return recovery_state(get_engine(), now=now)
+    except Exception as exc:
+        return {'visible':False, 'eligible':False,
+                'reason':f'Vérification du rattrapage indisponible ({type(exc).__name__}).'}
+
+
+def start_batch(spec: BatchSpec, *, db_config: dict[str, str | None] | None = None,
+                recovery_date: str | None = None) -> PipelineRunRecord:
     if not spec.runnable:
         raise ValueError(f"Le batch {spec.name} est désactivé ou en attente ({spec.status}).")
+    command = build_run_command(spec, **({'recovery_date':recovery_date} if recovery_date is not None else {}))
+    if recovery_date is not None:
+        from ihm.services.db import get_engine
+        from service.forward_pit.us_pipeline_recovery import require_recovery
+        require_recovery(get_engine(), recovery_date)
     return start_managed_run(
         step_key=f"batch:{spec.name}",
-        step_label=f"Batch — {spec.name}",
-        command=build_run_command(spec),
+        step_label=f"Batch — {spec.name}" + (f' — rattrapage {recovery_date}' if recovery_date else ''),
+        command=command,
         db_config=db_config,
         timeout_seconds=None,
         # Le launcher envoie déjà email + Telegram : pas de second email IHM.

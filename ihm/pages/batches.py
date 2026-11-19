@@ -31,6 +31,7 @@ from ihm.services.batch_management import (
     read_fr_inpi_mapping,
     read_fr_consensus_state,
     start_batch,
+    us_pipeline_recovery_state,
     uninstall_all_batches,
     uninstall_batch,
 )
@@ -218,6 +219,38 @@ def _render_last_run(row: dict[str, Any] | None) -> None:
         st.error(str(row["error_message"]))
 
 
+def _render_run_buttons(spec, *, disabled, recovery):
+    """The dated recovery action is shown only for an unfinished pre-open session."""
+    regular, catchup = st.columns(2) if recovery.get('visible') else (st.container(), None)
+    with regular:
+        if st.button('▶️ Lancer maintenant', key=f'batch_run_{spec.name}',
+                     disabled=disabled, use_container_width=True):
+            try:
+                record = start_batch(spec, db_config=None if spec.name.startswith(('fr_','cn_')) else get_runtime_db_config())
+            except Exception as exc:
+                st.error(f'Impossible de lancer le batch : {exc}')
+            else:
+                st.success(f'Batch lancé en arrière-plan · run {record.run_id}')
+                st.rerun()
+    if catchup is not None:
+        with catchup:
+            day = recovery['trade_date']
+            label = datetime.fromisoformat(day).strftime('%d/%m/%Y')
+            if st.button(f'↩️ Rattraper le {label}', key=f'batch_recovery_{spec.name}',
+                         disabled=disabled or not recovery.get('eligible'), use_container_width=True,
+                         help='Traite la dernière séance clôturée. Les comptes déjà terminés sont conservés ; aucun déverrouillage automatique.'):
+                try:
+                    record = start_batch(spec, db_config=get_runtime_db_config(), recovery_date=day)
+                except Exception as exc:
+                    st.error(f'Rattrapage non lancé : {exc}')
+                else:
+                    st.success(f'Rattrapage de la séance {day} lancé · run {record.run_id}')
+                    st.rerun()
+        st.caption(f'Séance clôturée à rattraper : {day}. Le contrôle de clôture reste actif pour la séance courante.')
+    if recovery.get('reason'):
+        st.caption(recovery['reason'])
+
+
 def _render_batch(
     spec: BatchSpec,
     task: dict[str, Any] | None,
@@ -368,7 +401,8 @@ def _render_batch(
             st.code(format_command(build_uninstall_command(spec)), language="powershell")
             st.caption(f"Journal principal : {spec.log_file} · Statut de configuration : {spec.status}")
 
-        install_col, run_col, uninstall_col = st.columns(3)
+        recovery = us_pipeline_recovery_state(spec) if spec.name == 'us_pipeline' else {}
+        install_col, run_col, uninstall_col = st.columns([1,2,1] if recovery.get('visible') else 3)
         with install_col:
             if st.button("♻️ Installer / réinstaller", key=f"batch_install_{spec.name}",
                          disabled=not supports_batch_execution(spec) or (Path(spec.catalog_path).name == "batch_fr.yaml" and not spec.runnable),
@@ -384,14 +418,7 @@ def _render_batch(
         with run_col:
             scheduled_running = bool(task and str(task.get("state")) == "Running")
             disabled = not spec.runnable or bool(active) or scheduled_running
-            if st.button("▶️ Lancer maintenant", key=f"batch_run_{spec.name}", disabled=disabled, use_container_width=True):
-                try:
-                    record = start_batch(spec, db_config=None if spec.name.startswith(('fr_','cn_')) else get_runtime_db_config())
-                except Exception as exc:
-                    st.error(f"Impossible de lancer le batch : {exc}")
-                else:
-                    st.success(f"Batch lancé en arrière-plan · run {record.run_id}")
-                    st.rerun()
+            _render_run_buttons(spec, disabled=disabled, recovery=recovery)
             if not spec.runnable:
                 st.caption("Activation impossible tant que le batch est désactivé ou en attente de fournisseur/quota.")
             elif active:

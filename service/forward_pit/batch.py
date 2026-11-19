@@ -2533,9 +2533,14 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
 
 
 def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None,
-            ipo_backfill_dates: tuple[str, str] | None = None) -> tuple[str, Outcome]:
+            ipo_backfill_dates: tuple[str, str] | None = None,
+            us_pipeline_recovery_date: str | None = None) -> tuple[str, Outcome]:
     config = load_batch_config(config_path); cfg = config.get(batch_name)
     if not isinstance(cfg, dict): raise KeyError(f"Section {batch_name} absente de batch.yaml")
+    if us_pipeline_recovery_date is not None:
+        if batch_name != 'us_pipeline':
+            raise ValueError('Session recovery is only supported for us_pipeline')
+        cfg = dict(cfg, _manual_recovery_date=us_pipeline_recovery_date)
     if ipo_backfill_dates is not None:
         if batch_name != 'eodhd_ipo_calendar_sync':
             raise ValueError('IPO backfill dates only supported for IPO batch')
@@ -2610,11 +2615,13 @@ def main() -> None:
     parser.add_argument("--batch", required=True)
     parser.add_argument("--batch-config")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument('--us-pipeline-recovery-date', help='Séance clôturée à rattraper avant la prochaine ouverture US')
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(); logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
         status, outcome = execute(
             args.batch, dry_run=args.dry_run, config_path=args.batch_config,
+            **({'us_pipeline_recovery_date':args.us_pipeline_recovery_date} if args.us_pipeline_recovery_date else {}),
         )
     except Exception as exc:
         failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)

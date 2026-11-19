@@ -1542,7 +1542,10 @@ def _poll_workflow_run(run_id: str, managed: _ManagedWorkflow) -> dict[str, obje
             "is_active": record.status in {"scheduled", "starting", "running"},
         }
 
-    if not snapshot["is_active"] and not managed.thread.is_alive():
+    # A terminal record can be visible while notification/finally still holds
+    # the pipeline lock. A sequential account must await that actual cleanup.
+    snapshot['workflow_finalizing'] = not snapshot['is_active'] and managed.thread.is_alive()
+    if not snapshot["is_active"] and not snapshot['workflow_finalizing']:
         with _REGISTRY_LOCK:
             _ACTIVE_WORKFLOWS.pop(run_id, None)
     return snapshot
@@ -1900,11 +1903,13 @@ def list_active_pipeline_runs() -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     for run_id in list(_ACTIVE_RUNS.keys()):
         snapshot = poll_pipeline_run(run_id)
-        if snapshot is not None:
+        if snapshot is not None and (snapshot.get('is_active', snapshot.get('status') in {'scheduled','starting','running'})
+                                     or snapshot.get('workflow_finalizing', False)):
             snapshots.append(snapshot)
     for run_id in list(_ACTIVE_WORKFLOWS.keys()):
         snapshot = poll_pipeline_run(run_id)
-        if snapshot is not None:
+        if snapshot is not None and (snapshot.get('is_active', snapshot.get('status') in {'scheduled','starting','running'})
+                                     or snapshot.get('workflow_finalizing', False)):
             snapshots.append(snapshot)
     snapshots.sort(key=lambda item: str(item.get("executed_at", "")), reverse=True)
     return snapshots
