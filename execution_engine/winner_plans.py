@@ -137,6 +137,8 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
     if config.paper_strategy_profile is not None:
         from common.q051_paper import validate_frozen
         state['paper_strategy_profile'] = validate_frozen(config.paper_strategy_profile)
+        state['q051_entry_time_in_force'] = config.paper_entry_time_in_force
+        state['q051_exit_time_in_force'] = config.paper_exit_time_in_force
         state.update(account_id=config.resolved_account_id, broker_mode=config.broker_mode)
     if policy.confirmation_bars == 0:
         from execution_engine.winner_standard_entry import standard_order_terms
@@ -240,10 +242,10 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
     from execution_engine.winner_standard_entry import standard_initial
     q051_approval = False
     if state.get('paper_strategy_profile') is not None:
-        from common.q051_paper import validate_frozen
+        from common.q051_paper import validate_frozen,entry_price_basis
         validate_frozen(state['paper_strategy_profile'])
         q051_approval = (action == 'ENTRY' and state['broker_mode'] == 'paper'
-            and standard_initial(state) and approval.get('price_basis') == 'q051_paper_moo_prior_close'
+            and standard_initial(state) and approval.get('price_basis') == entry_price_basis(state)
             and approval.get('q051_profile_sha256') == state['paper_strategy_profile']['sha256']
             and approval.get('order_type') == 'market' and approval.get('order_limit_price') is None
             and approval.get('reference_price_asof') == state['signal_date']

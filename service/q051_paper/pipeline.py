@@ -108,6 +108,8 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
     selected = ranked[ranked.selected].sort_values('rank')
     report = dict(status='COMPLETED', stage='predict', strategy_profile=reference()['profile_id'],
         run_id=run_id, batch_id=batch, trade_date=str(day), cutoff=cutoff.isoformat(),
+        entry_time_in_force=settings().get('entry_time_in_force','opg'),
+        exit_time_in_force=settings().get('exit_time_in_force','opg'),
         profile=reference(), policy=asdict(policy), universe_count=len(protocol['universe']),
         coverage=dict(scope=coverage['scope'], observed=len(covered), denominator=len(coverage['eligible']),
             ratio=len(covered)/len(coverage['eligible']), minimum=minimum, threshold=prediction_coverage_ratio(),
@@ -157,12 +159,13 @@ def qualified(run_id, *, batch, day, artifacts_dir):
     return folder, report
 
 
-def make_broker(engine, account):
+def make_broker(engine, account, *, entry_time_in_force=None,exit_time_in_force=None):
     from execution_engine.db_io import ExecutionRepository
     from execution_engine.broker_adapter import BrokerAdapter
     from service.alpaca.trading_client import AlpacaTradingClient
     from common.verified_http import verified_session
-    cfg = execution_config(account)
+    cfg = execution_config(account,entry_time_in_force=entry_time_in_force or settings().get('entry_time_in_force','opg'),
+        exit_time_in_force=exit_time_in_force or settings().get('exit_time_in_force','opg'))
     return ExecutionRepository(engine), BrokerAdapter(AlpacaTradingClient(broker_mode='paper', account_id=account,
         session=verified_session()), cfg), cfg
 
@@ -172,7 +175,8 @@ def risk(engine, folder, selection, account, day):
     from execution_engine.winner_live_risk import concentration_allowed
     from common.q051_paper import risk_config
     from sqlalchemy import text
-    repo, broker, config = make_broker(engine, account)
+    repo, broker, config = make_broker(engine, account,entry_time_in_force=selection.get('entry_time_in_force','opg'),
+        exit_time_in_force=selection.get('exit_time_in_force','opg'))
     account_folder = folder/'accounts'/account
     account_folder.mkdir(parents=True, exist_ok=True)
     path = account_folder/'risk.json'
@@ -278,7 +282,8 @@ def execute(engine, folder, selection, account, day):
         if saved.get('risk_run_id') != result['risk_run_id']:
             raise ValueError('Q051 : exécution antérieure d’un autre risque')
         return saved
-    repo, broker, cfg = make_broker(engine, account)
+    repo, broker, cfg = make_broker(engine, account,entry_time_in_force=selection.get('entry_time_in_force','opg'),
+        exit_time_in_force=selection.get('exit_time_in_force','opg'))
     require_campaign_watcher(repo, cfg)
     owner = uuid.uuid4().hex
     if not repo.acquire_execution_lock(account_id=account, exec_run_id=owner):
@@ -307,6 +312,8 @@ def execute(engine, folder, selection, account, day):
             repo.update_execution_run_status(owner, 'FAILED')
             raise ValueError('Q051 : soumission ambiguë, campagnes conservées ; aucune relance automatique')
         report = dict(status='COMPLETED', stage='execution', exec_run_id=owner,
+            entry_time_in_force=selection.get('entry_time_in_force','opg'),
+            exit_time_in_force=selection.get('exit_time_in_force','opg'),
             risk_run_id=result['risk_run_id'], account_id=account, trade_date=str(day),
             targets=len(targets), plans=plans, winner_standard_entry=runtime,
             submitted=runtime['winner_buys_submitted'], profile_sha256=reference()['sha256'])

@@ -858,13 +858,15 @@ def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig |
                     or not is_effectively_integer_quantity(intent.qty) or intent.qty <= 0
                     or intent.side not in ('buy', 'sell')):
                 raise ValueError('Invalid scoped winner campaign order')
-            if (intent.time_in_force == 'opg' and intent.order_type == 'market'
+            if (intent.time_in_force in ('opg','day') and intent.order_type == 'market'
                     and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
-                    and intent.winner_entry_mode == 'q051_moo' and intent.broker_mode == 'paper'
+                    and intent.winner_entry_mode == ('q051_moo' if intent.time_in_force=='opg' else 'q051_day')
+                    and intent.broker_mode == 'paper'
+                    and config.paper_entry_time_in_force==intent.time_in_force
                     and config.paper_strategy_profile is not None):
                 from common.q051_paper import validate_frozen
                 validate_frozen(config.paper_strategy_profile)
-                return 'opg'
+                return intent.time_in_force
             if (intent.time_in_force == 'ioc' and intent.order_type == 'limit'
                     and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
                     and intent.limit_price is not None and intent.limit_price > 0):
@@ -877,6 +879,13 @@ def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig |
             if (intent.time_in_force == 'opg' and intent.order_type == 'market'
                     and intent.intent_role == IntentRole.EXIT and intent.side == 'sell'):
                 return 'opg'
+            if (intent.time_in_force=='day' and intent.order_type=='market'
+                    and intent.intent_role==IntentRole.EXIT and intent.side=='sell'
+                    and intent.broker_mode=='paper' and config.paper_strategy_profile is not None
+                    and config.paper_exit_time_in_force=='day'):
+                from common.q051_paper import validate_frozen
+                validate_frozen(config.paper_strategy_profile)
+                return 'day'
             raise ValueError('Campaign TIF restricted to LONG IOC/standard DAY entries / MOO exits')
         if (intent.time_in_force != 'opg' or intent.order_type != 'market'
                 or intent.intent_role != IntentRole.EXIT or intent.side not in ('buy', 'sell')
