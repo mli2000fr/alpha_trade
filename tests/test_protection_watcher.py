@@ -10,6 +10,25 @@ from execution_engine import protection_watcher as protection_watcher_module
 from execution_engine.protection_watcher import ProtectionTransitionWatcher, ProtectionWatcherService, parse_args
 
 
+def test_heartbeat_reports_business_failure_even_when_service_loop_is_alive():
+    from types import SimpleNamespace
+    repo=MagicMock();repo.refresh_execution_lock.return_value=True
+    service=object.__new__(ProtectionWatcherService)
+    service._watcher=SimpleNamespace(_repo=repo)
+    service._monotonic=lambda:100.
+    service._cfg=SimpleNamespace(heartbeat_interval_seconds=60.)
+    metrics=dict(iterations=1,cycles_with_work=1,idle_cycles=0,transitioned_items=0,
+        consecutive_failures=0,last_cycle_winner_failures=1)
+    args=dict(account_id='test1',exec_run_id=None,service_run_id='service',leader_lock_account='watcher:test1',
+              leader_ttl_seconds=240,last_heartbeat=0.)
+    service._maybe_log_heartbeat(metrics,**args)
+    assert repo.upsert_watcher_heartbeat.call_args.kwargs['status']=='ERROR'
+    assert 'failures: 1' in repo.upsert_watcher_heartbeat.call_args.kwargs['last_error']
+    metrics['last_cycle_winner_failures']=0
+    service._maybe_log_heartbeat(metrics,**args)
+    assert repo.upsert_watcher_heartbeat.call_args.kwargs['status']=='RUNNING'
+
+
 def test_service_broker_uses_verified_system_certificates(monkeypatch):
     session = MagicMock(name='verified_tls_session')
     factory = MagicMock()

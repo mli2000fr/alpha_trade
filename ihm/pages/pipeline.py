@@ -2174,6 +2174,9 @@ def render() -> None:
         st.info(f'Batch us_pipeline : {strategy["reference"]} activé en PAPER — '
                 f'TOP10 % Oracle H10 → jusqu’à {strategy["selection"]["long_top_n"]} LONG per-symbol, SL5 %, sortie open11. '
                 f'Anti-SL : {"activé" if strategy["selection"].get("apply_anti_sl", True) else "désactivé"}. '
+                f'Entrées : {active_paper["entry_time_in_force"].upper()} '
+                f'({"valables pendant la séance J+1" if active_paper["entry_time_in_force"]=="day" else "enchère d’ouverture uniquement"}). '
+                f'Sorties H10 : {active_paper["exit_time_in_force"].upper()}. '
                 'Les lancements manuels ci-dessous gardent leurs propres réglages.')
 
     options, live_confirmed = _build_launch_options()

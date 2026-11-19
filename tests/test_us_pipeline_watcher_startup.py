@@ -173,3 +173,16 @@ def test_process_inventory_does_not_confuse_accounts(monkeypatch):
     command[command.index('service')] = 'once'
     with pytest.raises(RuntimeError, match='déjà démarré mais incompatible'):
         startup.find_running_service('test1')
+
+
+def test_service_inventory_selects_worker_instead_of_venv_bootstrap(monkeypatch):
+    command=[str(startup.PROJECT_ROOT/'execution_engine/protection_watcher.py'),
+        '--mode','service','--account','test1','--broker-mode','paper']
+    wrapper=SimpleNamespace(info=dict(cmdline=command,ppid=10),pid=11)
+    worker=SimpleNamespace(info=dict(cmdline=command,ppid=11),pid=12)
+    monkeypatch.setattr('psutil.process_iter',lambda attrs:[wrapper,worker])
+    assert startup.find_running_service('test1') is worker
+    other=SimpleNamespace(info=dict(cmdline=command,ppid=50),pid=51)
+    monkeypatch.setattr('psutil.process_iter',lambda attrs:[wrapper,worker,other])
+    with pytest.raises(RuntimeError,match='Plusieurs watchers'):
+        startup.find_running_service('test1')

@@ -89,6 +89,8 @@ class WinnerCampaignRuntime:
         if self.state['status'] in ('CLOSED', 'EXPIRED', 'CANCELED'):
             return
         self.reconcile()
+        if self.state['status'] in ('CLOSED','EXPIRED','CANCELED'):
+            return
         self.rearm_failed_exit()
         self.protect()
         self.reconcile_lots()
@@ -185,11 +187,13 @@ class WinnerCampaignRuntime:
                 action=kind, quantity=quantity, approval=approved, now=self.now)
             reserved = True
             operation = self.state['operations'][-1]
+            from common.q051_paper import entry_tif
+            q051_tif=entry_tif(self.state) if self.state.get('paper_strategy_profile') is not None else None
             intent = make_intent(self.state, key, quantity=quantity, order_type=order_type,
                 price=limit if limit is not None else float(self.state['target']['entry_price']),
-                tif=('opg' if self.state.get('paper_strategy_profile') is not None else 'day')
+                tif=(q051_tif or 'day')
                     if standard and kind == 'ENTRY' else 'ioc',
-                entry_mode=('q051_moo' if self.state.get('paper_strategy_profile') is not None else 'standard')
+                entry_mode=(('q051_moo' if q051_tif=='opg' else 'q051_day') if q051_tif else 'standard')
                     if standard and kind == 'ENTRY' else None)
             operation['intent'] = asdict(intent)
             self.state['parents'][intent.intent_id] = dict(action=kind, booked_quantity=0, booked_notional=0.)
@@ -257,6 +261,9 @@ class WinnerCampaignRuntime:
                 self.book_sell(operation, raw)
             if operation['action'] in ('ENTRY', 'ADD', 'EXIT'):
                 operation['status'] = 'DONE' if raw.get('status') in TERMINAL else 'SUBMITTED'
+            if (operation['action']=='ENTRY' and raw.get('status') in TERMINAL
+                    and float(raw.get('filled_qty') or 0)==0 and not self.state['lots']):
+                self.state['status']='EXPIRED' if raw['status']=='expired' else 'CANCELED'
             self.save()
 
     def rearm_failed_exit(self):
@@ -369,7 +376,16 @@ class WinnerCampaignRuntime:
                 role=IntentRole.TAKE_PROFIT, order_type='limit', price=lot['tp'], parent=parent.intent_id)
                 if lot['tp'] else None)
             operation = self.reserve('PROTECT', tp or stop, lot_index=i, stop_intent=asdict(stop))
-            tp_order, stop_order = self.broker.protect(self.state, lot, parent, tp_intent=tp, stop_intent=stop)
+            try:
+                tp_order, stop_order = self.broker.protect(self.state, lot, parent, tp_intent=tp, stop_intent=stop)
+            except Exception as exc:
+                from service.alpaca.trading_client import BrokerApiError
+                if (isinstance(exc,BrokerApiError) and 400<=exc.status_code<500
+                        and exc.status_code!=429 and 'client_order_id' not in str(exc.body)):
+                    operation.update(status='MANUAL_REVIEW',definitive_rejection=str(exc)[:300])
+                    self.state['manual_review']='Protective order definitively rejected; held position requires immediate reconciliation: '+str(exc)[:300]
+                    self.save()
+                raise  # Ambiguous responses remain reserved; never repeat the POST blindly.
             lot['stop_order_id'] = stop_order.broker_order_id
             lot['tp_order_id'] = tp_order.broker_order_id if tp_order else None
             operation.update(status='DONE', broker_id=(tp_order or stop_order).broker_order_id)
@@ -477,10 +493,13 @@ class WinnerCampaignRuntime:
         own = next((x for x in positions if x['symbol'] == self.state['symbol']), None)
         if own is None or str(own.get('side')) != 'long' or float(own['qty']) < quantity:
             raise ValueError('Broker quantity does not cover deadline sale; reconcile first')
+        from common.q051_paper import exit_tif
+        validity=(exit_tif(self.state) if self.state.get('paper_strategy_profile') is not None else 'opg') if moo else None
         intent = make_intent(self.state, self.state['campaign_id']+'-deadline', quantity=quantity,
             side='sell', role=IntentRole.EXIT, order_type='market',
-            price=float(self.state['lots'][0]['entry']), tif='opg' if moo else None)
-        operation = self.reserve('EXIT', intent, booked_quantity=0, execution_timing='MOO' if moo else 'LATE_MARKET')
+            price=float(self.state['lots'][0]['entry']), tif=validity)
+        operation = self.reserve('EXIT', intent, booked_quantity=0,
+            execution_timing=('DAY_OPEN' if validity=='day' else 'MOO') if moo else 'LATE_MARKET')
         try:
             order = self.broker.submit(self.state, intent)
         except Exception as exc:

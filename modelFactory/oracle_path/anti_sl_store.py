@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import MetaData,Table,Column,String,Date,DateTime,Float,select,and_
+from sqlalchemy import MetaData,Table,Column,String,Date,DateTime,Double,select,and_,inspect
 
 from .anti_sl import FIELDS,load_manifest
 
@@ -12,14 +12,32 @@ def table():
     return Table('oracle_path_anti_sl_predictions',MetaData(),
         Column('prediction_date',Date,primary_key=True),Column('symbol',String(20),primary_key=True),
         Column('batch_id',String(255),primary_key=True),
-        Column('anti_sl_probability',Float),Column('anti_sl_threshold',Float),
+        Column('anti_sl_probability',Double),Column('anti_sl_threshold',Double),
         Column('anti_sl_model_sha256',String(64)),Column('anti_sl_manifest_sha256',String(64),nullable=False),
         Column('anti_sl_available',Date),Column('anti_sl_status',String(40),nullable=False),
         Column('anti_sl_features_sha256',String(64)),Column('updated_at',DateTime,nullable=False))
 
 
+def require_storage_precision(conn):
+    """Never publish freshly calculated scores through a legacy MySQL FLOAT.
+
+    MySQL can render a FLOAT with fewer digits than its binary representation;
+    the saved threshold would then fail the unchanged manifest check. Widening
+    is an explicit migration, outside the caller's prediction transaction.
+    """
+    if conn.dialect.name not in ('mysql','mariadb'):
+        return
+    columns={c['name']:c['type'] for c in inspect(conn).get_columns('oracle_path_anti_sl_predictions')}
+    if any(not isinstance(columns.get(name),Double) for name in ('anti_sl_probability','anti_sl_threshold')):
+        raise ValueError('Anti-SL: stockage DOUBLE requis ; appliquer '
+            'database/sql/migration_0089_anti_sl_prediction_precision.sql puis relancer ML Predict. '
+            'Aucun score ne sera remplacé via un stockage FLOAT arrondi.')
+
+
 def write(conn,frame,batch_id):
-    t=table();t.create(conn,checkfirst=True);now=datetime.now(timezone.utc).replace(tzinfo=None)
+    t=table();t.create(conn,checkfirst=True)
+    require_storage_precision(conn)
+    now=datetime.now(timezone.utc).replace(tzinfo=None)
     records=[]
     for r in frame.to_dict('records'):
         item={k:(None if pd.isna(r[k]) else r[k]) for k in FIELDS}

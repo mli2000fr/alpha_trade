@@ -324,6 +324,9 @@ def execution_message(summary, rows, *, allocations=None):
              f"Run exécution {summary['run_id']} · risque {summary.get('risk_run_id')}",
              f"État : {summary.get('status', '?')} · ordres soumis : {summary.get('submitted_orders', summary.get('submitted', 0))}"
              f" · échecs : {summary.get('failed_orders', 0)}"]
+    if summary.get('entry_time_in_force') in ('day','opg'):
+        lines.append('Validité des entrées : '+summary['entry_time_in_force'].upper()+
+                     (' — séance J+1' if summary['entry_time_in_force']=='day' else ' — enchère d’ouverture uniquement'))
     total, filled = 0., 0
     for row in rows:
         label = f"• {row['symbol']} — {_direction(row['side'], row['intent_role'])}"
