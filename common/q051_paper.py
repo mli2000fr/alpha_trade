@@ -71,8 +71,15 @@ def settings(raw=None):
         raise ValueError('us_pipeline.b_anti_sl_reference.apply_anti_sl : booléen requis')
     value = new if new.get('enabled') else old
     profile_id = ('q051_b_anti_sl_witness_v1' if new.get('apply_anti_sl', True) else 'q051_b_witness_v1') if new.get('enabled') else PROFILE_ID
+    tif=value.get('entry_time_in_force','opg')
+    if tif not in ('opg','day'):
+        raise ValueError('us_pipeline : entry_time_in_force doit être day ou opg')
+    exit_validity=value.get('exit_time_in_force','opg')
+    if exit_validity not in ('opg','day'):
+        raise ValueError('us_pipeline : exit_time_in_force doit être day ou opg')
     return dict(enabled=value.get('enabled', False), model_batch_id=value.get('model_batch_id'),
-                artifacts_dir=value.get('artifacts_dir', 'artifacts/models'), profile_id=profile_id)
+                artifacts_dir=value.get('artifacts_dir', 'artifacts/models'), profile_id=profile_id,
+                entry_time_in_force=tif,exit_time_in_force=exit_validity)
 
 
 def require_paper(account_id, mode='paper'):
@@ -91,7 +98,7 @@ def risk_config(equity):
     return RiskConfig(**values)
 
 
-def execution_config(account_id, profile_id=None):
+def execution_config(account_id, profile_id=None, *, entry_time_in_force='opg',exit_time_in_force='opg'):
     from common.winner_pyramiding import WinnerPyramidingConfig
     from execution_engine.config import (ExecutionConfig, LeverageConfig,
                                          TrailingStopConfig, TimeStopConfig)
@@ -101,7 +108,8 @@ def execution_config(account_id, profile_id=None):
         winner_pyramiding=WinnerPyramidingConfig(**p['winner']),
         leverage=LeverageConfig(**p['leverage']), trailing_stop=TrailingStopConfig(enabled=False),
         time_stop=TimeStopConfig(enabled=False), force_close_on_breaker=False,
-        enable_dynamic_trailing_transition=False, paper_strategy_profile=p)
+        enable_dynamic_trailing_transition=False, paper_strategy_profile=p,
+        paper_entry_time_in_force=entry_time_in_force,paper_exit_time_in_force=exit_time_in_force)
 
 
 def pipeline_options(options, policy):
@@ -128,13 +136,40 @@ class NoDrawdownController:
         return False
 
 
+def entry_tif(state):
+    # Missing on old campaigns: preserve their original opening-only contract.
+    value=state.get('q051_entry_time_in_force','opg')
+    if value not in ('opg','day'):
+        raise ValueError('Durée de validité Q051 figée invalide')
+    return value
+
+
+def entry_price_basis(state):
+    return 'q051_paper_day_prior_close' if entry_tif(state)=='day' else 'q051_paper_moo_prior_close'
+
+
+def exit_tif(state):
+    value=state.get('q051_exit_time_in_force','opg')
+    if value not in ('opg','day'):
+        raise ValueError('Durée de validité de sortie Q051 figée invalide')
+    return value
+
+
 def entry_window(state, now):
-    """Only queue for J+1, never turn a missed opening into a late purchase."""
+    """Frozen DAY: J+1 regular session; legacy OPG: opening auction only."""
     from common.winner_pyramiding import aware
     from zoneinfo import ZoneInfo
     from common.market_calendar import get_market_calendar
     now = aware(now)
     opening = aware(state['earliest_entry_open'])
+    if entry_tif(state)=='day':
+        cal=get_market_calendar('US_EQ',allow_us_weekday_fallback=False)
+        day=opening.astimezone(ZoneInfo('America/New_York')).date()
+        session=next((s for s in cal.sessions(day,day) if s.is_open),None)
+        signal=date.fromisoformat(state['signal_date'])
+        previous=next((s for s in cal.sessions(signal,signal) if s.is_open),None)
+        return bool(session and previous and previous.close_at_utc<now<session.close_at_utc
+                    and aware(session.open_at_utc)==opening)
     # OPG: Alpaca accepts before 09:28 NY or after 19:00 for next auction.
     # Calendar sessions still decide J+1, including holidays and weekends.
     if now >= opening.replace(second=0, microsecond=0) - timedelta(minutes=2):

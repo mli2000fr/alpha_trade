@@ -232,12 +232,13 @@ class NativeQ051Risk:
             raise ValueError('Q051 : snapshot de compte périmé ou limite MOO dépassée')
         evidence = hashlib.sha256(json.dumps(context, default=str, sort_keys=True).encode()).hexdigest()
         from datetime import timedelta
+        from common.q051_paper import entry_price_basis
         return dict(producer='native_intraday_risk', campaign_id=state['campaign_id'],
             account_id=state['account_id'], broker_mode='paper', state_version=version,
             side='buy', qualified=True, max_quantity=decision['quantity'], limit_price=price,
             available_at=decision_time.isoformat(), valid_until=(decision_time+timedelta(seconds=30)).isoformat(),
             config_hash=cfg.fingerprint, portfolio_hash=evidence, entry_data_qualified=True,
             realtime_sip_qualified=False, regime_qualified=True, standard_entry_quote_check_enabled=False,
-            price_basis='q051_paper_moo_prior_close', reference_price_asof=str(signal),
+            price_basis=entry_price_basis(state), reference_price_asof=str(signal),
             order_type='market', order_limit_price=None, q051_profile_sha256=state['paper_strategy_profile']['sha256'],
             q051_covariance=decision.get('covariance'), reason=decision['reason'])

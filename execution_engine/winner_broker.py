@@ -43,6 +43,22 @@ class NativeWinnerBroker:
         # The generic legacy port deliberately has no unsafe fallback here.
         self.client = broker._client
 
+    def campaign_config(self, state):
+        """Reconcile with the same frozen PAPER profile used at admission.
+
+        A multi-account watcher has a generic config. It must not reinterpret
+        an already submitted Q051 opening order through that generic config.
+        """
+        if state.get('paper_strategy_profile') is None:
+            return self.config
+        from common.q051_paper import validate_frozen, execution_config,entry_tif,exit_tif
+        profile = validate_frozen(state['paper_strategy_profile'])
+        if (self.config.broker_mode != 'paper' or state['broker_mode'] != 'paper'
+                or self.config.resolved_account_id != state['account_id']):
+            raise ValueError('Q051 broker : compte/mode différent du profil figé')
+        return execution_config(state['account_id'], profile_id=profile['profile_id'],
+                                entry_time_in_force=entry_tif(state),exit_time_in_force=exit_tif(state))
+
     def lookup(self, intent):
         try:
             return self.client._request('GET', '/v2/orders:by_client_order_id',
@@ -66,13 +82,8 @@ class NativeWinnerBroker:
             account_id=state['account_id'], status='NEW')
         try:
             if state.get('paper_strategy_profile') is not None:
-                from common.q051_paper import validate_frozen, execution_config
                 from execution_engine.broker_adapter import BrokerAdapter
-                validate_frozen(state['paper_strategy_profile'])
-                if self.config.broker_mode != 'paper' or state['broker_mode'] != 'paper':
-                    raise ValueError('Q051 broker exclusivement PAPER')
-                order = BrokerAdapter(self.client, execution_config(state['account_id'],
-                    profile_id=state['paper_strategy_profile']['profile_id'])).submit_intent(intent)
+                order = BrokerAdapter(self.client, self.campaign_config(state)).submit_intent(intent)
             else:
                 order = self.broker.submit_intent(intent)
         except BrokerApiError as exc:
@@ -84,10 +95,11 @@ class NativeWinnerBroker:
         return order
 
     def persist_order(self, state, intent, order):
+        payload = intent_to_alpaca_payload(intent, config=self.campaign_config(state))
         self.repo.upsert_execution_order_request_from_intent(intent,
             account_id=state['account_id'], status=order.status)
         self.repo.upsert_execution_broker_order(intent, order, account_id=state['account_id'],
-            raw_payload=intent_to_alpaca_payload(intent, config=self.config))
+            raw_payload=payload)
 
     def persist(self, state, intent, raw):
         order = self.broker.broker_order_from_api(raw, intent_id=intent.intent_id)

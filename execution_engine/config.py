@@ -282,8 +282,14 @@ class ExecutionConfig:
     # An explicit frozen value overrides YAML (replay / existing campaigns).
     winner_pyramiding: WinnerPyramidingConfig = field(default_factory=load_winner_pyramiding_config)
     paper_strategy_profile: dict[str, Any] | None = None
+    paper_entry_time_in_force: str = 'opg'
+    paper_exit_time_in_force: str = 'opg'
 
     def __post_init__(self) -> None:
+        if self.paper_entry_time_in_force not in ('opg','day'):
+            raise ValueError('paper_entry_time_in_force doit être day ou opg')
+        if self.paper_exit_time_in_force not in ('opg','day'):
+            raise ValueError('paper_exit_time_in_force doit être day ou opg')
         if self.paper_strategy_profile is not None:
             from common.q051_paper import validate_frozen
             from dataclasses import asdict

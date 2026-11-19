@@ -46,7 +46,8 @@ def _compatible(command, account_id):
 def find_running_service(account_id):
     """Also catch a service still starting, before its first heartbeat exists."""
     import psutil
-    for process in psutil.process_iter(['cmdline']):
+    matches=[]
+    for process in psutil.process_iter(['cmdline','ppid']):
         command = process.info.get('cmdline') or []
         if not _is_watcher_command(command):
             continue
@@ -55,8 +56,14 @@ def find_running_service(account_id):
             continue
         if not _compatible(command, account_id):
             raise RuntimeError('Watcher déjà démarré mais incompatible ; étape 12 bloquée sans nouveau démarrage')
-        return process
-    return None
+        matches.append(process)
+    # Windows venv python.exe can be a bootstrap parent of the real worker.
+    # Stop/check the worker, not merely its wrapper while it is still running.
+    parents={p.info.get('ppid') for p in matches}
+    workers=[p for p in matches if p.pid not in parents]
+    if len(workers)>1:
+        raise RuntimeError('Plusieurs watchers indépendants pour ce compte ; vérifier avant reprise')
+    return workers[0] if workers else None
 
 
 def healthy_service(repo, account_id):
@@ -204,8 +211,13 @@ def restart_outdated_q051_service(repo, account, directory):
         command = existing.cmdline()
         if not _is_watcher_command(command) or not _compatible(command, account):
             raise RuntimeError('Identité watcher modifiée ; arrêt refusé')
+        parent=existing.parent()
+        wrapper=(parent if parent is not None and _is_watcher_command(parent.cmdline())
+                 and _compatible(parent.cmdline(),account) else None)
         existing.terminate()
         existing.wait(timeout=15)
+        if wrapper is not None:
+            wrapper.wait(timeout=15)
         from execution_engine.watcher_lease import release_dead_local_watcher_lease
         release_dead_local_watcher_lease(repo.engine, account)
         receipt['status'] = 'STOPPED_FOR_CODE_REFRESH'

@@ -1920,6 +1920,7 @@ class ProtectionWatcherService:
                     continue
 
                 cycle_metrics = self._aggregate_cycle_summaries(summaries)
+                metrics['last_cycle_winner_failures']=sum(int(s.get('winner_failures',0) or 0) for s in summaries)
                 has_work = any(value > 0 for value in cycle_metrics.values())
                 cycle_finished_at = datetime.now()
                 if has_work:
@@ -2082,8 +2083,9 @@ class ProtectionWatcherService:
                     account_id=account_id,
                     hostname=socket.gethostname(),
                     pid=os.getpid(),
-                    status="RUNNING" if metrics["consecutive_failures"] == 0 else "ERROR",
-                    last_error=None,
+                    status="RUNNING" if metrics["consecutive_failures"] == 0 and not metrics.get('last_cycle_winner_failures') else "ERROR",
+                    last_error=(f"Winner protection/reconciliation failures: {metrics['last_cycle_winner_failures']}"
+                                if metrics.get('last_cycle_winner_failures') else None),
                 )
             except Exception:
                 LOGGER.debug("watcher_heartbeats persist failed", exc_info=True)

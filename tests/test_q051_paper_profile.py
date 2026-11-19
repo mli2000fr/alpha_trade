@@ -229,7 +229,7 @@ def risk_fixture(tmp_path, monkeypatch, *, invalid_target=False):
     repo.acquire_execution_lock.return_value = True
     broker = MagicMock()
     broker._client.get_asset.return_value = dict(tradable=True,status='active',marginable=True)
-    monkeypatch.setattr(pipeline,'make_broker',lambda *a:(repo,broker,execution_config('default')))
+    monkeypatch.setattr(pipeline,'make_broker',lambda *a,**kw:(repo,broker,execution_config('default')))
     ctx = context(vol=.005)
     ctx.update(reference_closes={'TEST':100.},base_symbols=[],regime_allowed=True)
     monkeypatch.setattr('service.q051_paper.risk.capture',lambda *a,**k:deepcopy(ctx))

@@ -32,7 +32,9 @@ class BrokerAdapter:
         payload = intent_to_alpaca_payload(intent, config=self._config)
         policy = self._config.winner_pyramiding
         q051 = (self._config.paper_strategy_profile is not None and intent.broker_mode == 'paper'
-            and intent.winner_entry_mode == 'q051_moo' and intent.time_in_force == 'opg'
+            and intent.time_in_force in ('opg','day')
+            and intent.winner_entry_mode == ('q051_moo' if intent.time_in_force=='opg' else 'q051_day')
+            and self._config.paper_entry_time_in_force==intent.time_in_force
             and intent.order_type == 'market' and intent.side == 'buy' and bool(intent.winner_campaign_id))
         standard_without_quote = (policy.enabled and policy.confirmation_bars == 0
             and not policy.standard_entry_quote_check_enabled
