@@ -155,7 +155,8 @@ llm_directional_filter:
   evidence_fundamental_max_period_age_days: 200
   evidence_context_max_age_minutes: 30  # Bloque un appel trop tardif ; pas de refresh implicite à mi-run.
   # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
-  enabled: false  # Filtrage GPT/DeepSeek désactivé dans l'IHM et le batch us_pipeline.
+  enabled: false  # Défaut désactivé ; le batch planifié reste sans GPT.
+  manual_opt_in_allowed: true  # Autorise à cocher explicitement le filtre dans l'IHM, pour ce lancement seulement.
   provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
   # DeepSeek Web : Search/Fetch + analyse DeepSeek natifs, seule DEEPSEEK_API_KEY nécessaire.
   model: gpt-6-luna

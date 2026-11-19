@@ -384,7 +384,12 @@ def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> li
     ]
 
 
-def build_run_command(spec: BatchSpec, *, recovery_date: str | None = None) -> list[str]:
+def build_run_command(spec: BatchSpec, *, recovery_date: str | None = None,
+                      q051_llm_filter: bool = False) -> list[str]:
+    if q051_llm_filter:
+        if spec.name != 'us_pipeline' or Path(spec.catalog_path).name != 'batch.yaml' or recovery_date is not None:
+            raise ValueError('GPT manuel réservé à un nouveau lancement us_pipeline, sans modifier une reprise')
+        return build_run_command(spec) + ['-Q051LlmFilter']
     if recovery_date is not None:
         if (spec.name != 'us_pipeline' or Path(spec.catalog_path).name != 'batch.yaml'
                 or date.fromisoformat(recovery_date).isoformat() != recovery_date):
@@ -521,10 +526,11 @@ def us_pipeline_recovery_state(spec: BatchSpec) -> dict[str, Any]:
 
 
 def start_batch(spec: BatchSpec, *, db_config: dict[str, str | None] | None = None,
-                recovery_date: str | None = None) -> PipelineRunRecord:
+                recovery_date: str | None = None, q051_llm_filter: bool = False) -> PipelineRunRecord:
     if not spec.runnable:
         raise ValueError(f"Le batch {spec.name} est désactivé ou en attente ({spec.status}).")
-    command = build_run_command(spec, **({'recovery_date':recovery_date} if recovery_date is not None else {}))
+    command = build_run_command(spec, **({'recovery_date':recovery_date} if recovery_date is not None else {}),
+                                **({'q051_llm_filter':True} if q051_llm_filter else {}))
     if recovery_date is not None:
         from ihm.services.db import get_engine
         from service.forward_pit.us_pipeline_recovery import require_recovery

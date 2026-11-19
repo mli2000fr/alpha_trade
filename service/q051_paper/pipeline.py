@@ -1,7 +1,7 @@
 """Scheduled Q051 10/11/12 with immutable selection and per-account admissions.
 
-No training, no cloud LLM, no options filter, no global profile mutation. The
-existing Winner OMS/watcher owns fills, standing SL5 and the open11 deadline.
+No training/options filter/global profile mutation. Optional manual cloud LLM
+may veto ranked LONGs. Winner still owns fills, SL5 and the open11 deadline.
 """
 import argparse
 from dataclasses import asdict
@@ -79,7 +79,7 @@ def rank_selection(verified, model_root, universe_size):
         apply_anti_sl=policy.get('apply_anti_sl', True)), config
 
 
-def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
+def predict(engine, *, run_id, batch, day, artifacts_dir, account='default', llm_filter_enabled=False):
     from modelFactory.oracle_path.predict import predict_oracle_path_history
     from modelFactory.oracle.predictions_store import load_oracle_predictions
     from modelFactory.oracle_path.directional import read_predictions
@@ -87,6 +87,11 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
     folder.mkdir(parents=True, exist_ok=False)
     write(folder/'started.json', dict(profile=reference(), batch_id=batch, trade_date=day, started_at=datetime.now(UTC)))
     root, protocol = contract(batch, artifacts_dir, day)
+    if llm_filter_enabled:
+        if account != 'default':
+            raise ValueError('Analyse LLM Q051 partagée : lancement initial sur default PAPER requis')
+        from service.q051_paper.llm_filter import manual_config
+        manual_config(protocol['horizon'], reference()['selection']['long_top_n'])
     from service.q051_paper.coverage import capture as capture_coverage
     _, broker, _ = make_broker(engine, account)
     coverage, assets = capture_coverage(broker._client, protocol['universe'], account=account, day=day)
@@ -104,6 +109,11 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
         raise ValueError('Q051 : couverture Oracle insuffisante')
     verified = read_predictions(engine, root, oracle, batch, cutoff=cutoff)
     ranked, policy = rank_selection(verified, root, len(protocol['universe']))
+    llm_receipt = None
+    if llm_filter_enabled:
+        from service.q051_paper.llm_filter import apply
+        ranked, llm_receipt = apply(engine, ranked, run_id=run_id, batch=batch, day=day,
+                                    horizon=protocol['horizon'])
     ranked.to_parquet(folder/'selection.parquet', index=False)
     selected = ranked[ranked.selected].sort_values('rank')
     report = dict(status='COMPLETED', stage='predict', strategy_profile=reference()['profile_id'],
@@ -118,6 +128,8 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
         selected=selected.symbol.tolist(), protocol_sha256=digest(root/'protocol.json'),
         directional_manifest_sha256=digest(root/'directional/manifest.json'),
         selection_sha256=digest(folder/'selection.parquet'))
+    if llm_receipt is not None:
+        report['llm_filter'] = llm_receipt
     from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
     if anti_enabled(protocol):
         report.update(anti_sl_manifest_sha256=digest(root/'anti_sl/manifest.json'),
@@ -156,6 +168,9 @@ def qualified(run_id, *, batch, day, artifacts_dir):
             or coverage['source_payload_sha256'] != fingerprint(assets)):
         raise ValueError('Q051 : preuve de couverture modifiée')
     validate(coverage, protocol['universe'], [day], now=timestamp(coverage['observed_at']))
+    if report.get('llm_filter'):
+        from service.q051_paper.llm_filter import validate as validate_llm
+        validate_llm(engine, report, pd.read_parquet(folder/'selection.parquet'), day)
     return folder, report
 
 
@@ -253,6 +268,8 @@ def risk(engine, folder, selection, account, day):
             rejected_count=len(decisions)-len(targets), selected_count=len(selected),
             regime_allowed=context['regime_allowed'], profile_sha256=reference()['sha256'],
             finished_at=datetime.now(UTC).isoformat())
+        if selection.get('llm_filter'):
+            report['llm_filter'] = selection['llm_filter']
         write(path, report)
         write(account_folder/'risk.seal.json', dict(risk_sha256=digest(path)))
         return report
@@ -317,6 +334,8 @@ def execute(engine, folder, selection, account, day):
             risk_run_id=result['risk_run_id'], account_id=account, trade_date=str(day),
             targets=len(targets), plans=plans, winner_standard_entry=runtime,
             submitted=runtime['winner_buys_submitted'], profile_sha256=reference()['sha256'])
+        if selection.get('llm_filter'):
+            report['llm_filter'] = selection['llm_filter']
         write(p/'execution.json', report)
         repo.update_execution_run_status(owner, 'COMPLETED')
         return report
@@ -334,6 +353,7 @@ def main():
     parser.add_argument('--artifacts-dir', default='artifacts/models')
     from common.q051_paper import PROFILE_FILES, PROFILE_ID, profile_scope
     parser.add_argument('--profile-id', choices=list(PROFILE_FILES), default=PROFILE_ID)
+    parser.add_argument('--llm-filter', action='store_true', help='Activation explicite pour ce predict manuel uniquement')
     args = parser.parse_args()
     with profile_scope(args.profile_id):
         run_stage(args)
@@ -342,6 +362,8 @@ def main():
 def run_stage(args):
     logging.basicConfig(level=logging.INFO)
     require_paper(args.account)
+    if getattr(args,'llm_filter',False) and args.stage != 'predict':
+        raise ValueError('L’option LLM appartient à la nouvelle sélection de l’étape10 ; reprise scellée à11/12')
     policy = settings()
     if (not policy['enabled'] or policy['model_batch_id'] != args.batch_id
             or Path(args.artifacts_dir).resolve() != Path(policy['artifacts_dir']).resolve()):
@@ -355,7 +377,8 @@ def run_stage(args):
     day = date.fromisoformat(args.trade_date)
     if args.stage == 'predict':
         report = predict(engine, run_id=args.run_id, batch=args.batch_id, day=day,
-                         artifacts_dir=args.artifacts_dir, account=args.account)
+                         artifacts_dir=args.artifacts_dir, account=args.account,
+                         **({'llm_filter_enabled':True} if getattr(args,'llm_filter',False) else {}))
     else:
         folder, selected = qualified(args.run_id, batch=args.batch_id, day=day, artifacts_dir=args.artifacts_dir)
         report = risk(engine, folder, selected, args.account, day) if args.stage == 'risk' else execute(engine, folder, selected, args.account, day)

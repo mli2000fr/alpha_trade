@@ -1769,6 +1769,9 @@ def _build_chained_ps_commands(
 
 def path_directional_options(options: PipelineLaunchOptions) -> PipelineLaunchOptions:
     """A selected signed path bundle owns its selection, not an options/LLM batch."""
+    if options.q051_paper_enabled:
+        # Q051 owns the optional post-ranking LLM veto and its sealed lineage.
+        return options
     batch=(options.ml_predict_batch_id if options.ml_predict_use_historical_range else
            options.ml_live_predict_batch_id) or options.ml_predict_batch_id
     if batch:
@@ -1792,11 +1795,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id
         if not batch:
             raise ValueError('Q051 : modèle H10 explicite requis')
-        return [sys.executable, '-u', '-m', 'service.q051_paper.pipeline',
+        command = [sys.executable, '-u', '-m', 'service.q051_paper.pipeline',
             '--stage', {'ml_predict':'predict','risk_management':'risk','execution':'execution'}[step_key],
             '--run-id', options.q051_run_id, '--batch-id', batch,
             '--trade-date', options.trade_date, '--account', options.account_id or 'default',
             '--artifacts-dir', options.ml_artifacts_dir, '--profile-id', options.q051_profile_id]
+        if options.llm_filter_enabled and step_key == 'ml_predict':
+            command.append('--llm-filter')
+        return command
     options=path_directional_options(options)
     if step_key in ('risk_management', 'execution') and options.allow_fractional_shares:
         from common.winner_pyramiding import load_winner_pyramiding_config

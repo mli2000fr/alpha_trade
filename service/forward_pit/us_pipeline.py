@@ -170,6 +170,33 @@ def options_filter_options(options, steps, *, config=None):
                    ml_live_predict_batch_id=config.default_oracle_batch_id)
 
 
+def fresh_pipeline_options(cfg, policy, day, steps):
+    """One fresh daily configuration for the scheduler and the Pipeline page.
+
+    Read-only construction: never starts a collector, watcher or broker order.
+    Recovery retains its already sealed options instead of calling this helper.
+    """
+    options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
+    options = execution_options(options, policy, steps)
+    if {s.num for s in steps}.intersection({'10', '11', '12'}):
+        from common.q051_paper import pipeline_options
+        options = pipeline_options(options, policy)
+        if options.q051_paper_enabled and {s.num for s in steps}.intersection({'11', '12'}) and '10' not in {s.num for s in steps}:
+            raise ValueError('Q051 quotidien : inclure étape 10 pour figer une nouvelle sélection partagée')
+    options = llm_options(options, steps)
+    options = options_filter_options(options, steps)
+    if cfg.get('_manual_q051_llm_filter', False):
+        if not options.q051_paper_enabled or options.execution_mode != 'paper' or options.account_id != 'default':
+            raise ValueError('GPT manuel : profil Q051/B actif sur default PAPER requis')
+        if not {'10', '11', '12'} <= {s.num for s in steps}:
+            raise ValueError('GPT manuel : inclure les étapes 10/11/12')
+        from service.llm_directional.config import load_filter_config as llm_config
+        if not llm_config().manual_opt_in_allowed:
+            raise ValueError('Activation LLM manuelle interdite dans config.yaml')
+        options = replace(options, llm_filter_enabled=True, llm_specific_protections=False)
+    return options
+
+
 def session_plan(now, *, calendar=None):
     """No weekday-only fallback; date is the actual NY session, frozen once."""
     if now.tzinfo is None:
@@ -197,7 +224,7 @@ def additional_paper_accounts(options, policy, steps):
         raise ValueError('us_pipeline.run_other_paper_accounts must be boolean')
     if not enabled or options.execution_mode != 'paper' or not {'11', '12'} <= {s.num for s in steps}:
         return ()
-    if options.llm_filter_enabled:
+    if options.llm_filter_enabled and not options.q051_paper_enabled:
         raise ValueError('us_pipeline : filtre LLM limité à default ; mettre run_other_paper_accounts: false')
     from service.alpaca.accounts import AccountRegistry
     # Registry objects contain credentials; only their identifiers leave here.
@@ -235,15 +262,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         if checked.execution_mode != options.execution_mode:
             raise ValueError('Rattrapage : mode d’exécution différent du plan initial')
     else:
-        options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
-        options = execution_options(options, policy, steps)
-        if {s.num for s in steps}.intersection({'10','11','12'}):
-            from common.q051_paper import pipeline_options
-            options = pipeline_options(options, policy)
-            if options.q051_paper_enabled and {s.num for s in steps}.intersection({'11','12'}) and '10' not in {s.num for s in steps}:
-                raise ValueError('Q051 quotidien : inclure étape 10 pour figer une nouvelle sélection partagée')
-        options = llm_options(options, steps)
-        options = options_filter_options(options, steps)
+        options = fresh_pipeline_options(cfg, policy, day, steps)
     other_accounts = additional_paper_accounts(options, policy, steps)
     secondary_steps = selected_steps([11, 12])
     account_plans = [(replace(options, account_id=account), secondary_steps) for account in other_accounts]
@@ -277,8 +296,9 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         from common.q051_paper import reference
         active_profile = reference(options.q051_profile_id)
         LOGGER.info('Profil %s PAPER actif : TOP10%% Oracle H10 → TOP%d LONG, SL5/open11, '
-            'plafond achats1x, sans B4/DD15 ni options/GPT ; anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
+            'plafond achats1x, sans B4/DD15 ni options ; LLM manuel=%s anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
             options.q051_profile_id, active_profile['selection']['long_top_n'],
+            options.llm_filter_enabled,
             active_profile['selection'].get('apply_anti_sl', 'selon modèle'),
             active_profile['portfolio_volatility'].get('enabled', True), active_profile['regime'].get('enabled', True),
             options.q051_run_id,options.ml_live_predict_batch_id)

@@ -7,6 +7,7 @@ from .protections import ProtectionProfile
 @dataclass(frozen=True)
 class FilterConfig:
     enabled: bool = False
+    manual_opt_in_allowed: bool = True  # Explicit UI opt-in, independent of scheduled default.
     provider: str = 'openai'  # Absent in archived runs: preserve GPT semantics.
     model: str = 'gpt-6.1-sol'
     api_key_env: str = 'OPENAI_API_KEY'
@@ -94,6 +95,8 @@ class FilterConfig:
                 raise ValueError(f'{name}: entier entre {minimum} et {maximum} requis')
         if type(self.enabled) is not bool:
             raise ValueError('enabled doit être booléen')
+        if type(self.manual_opt_in_allowed) is not bool:
+            raise ValueError('manual_opt_in_allowed doit être booléen')
         for name in ('allow_long', 'allow_short'):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f'{name} doit être booléen')

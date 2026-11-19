@@ -6,6 +6,48 @@
 
 ## Repères actuels US/CN/FR et filtre GPT
 
+**19/11/2026 — configuration commune avec us_pipeline :** sur le marché US,
+la case **Utiliser la configuration du batch us_pipeline** est cochée par
+défaut. Le bouton **Lancer le pipeline — configuration us_pipeline** utilise
+le même lanceur que la page Batchs : paramètres de `config.yaml`, collectes
+de `batch.yaml`, étapes selon la séance, modèle et profil actifs, puis
+11/12 sur les autres comptes PAPER configurés. Le compte de la barre latérale
+ne remplace pas les comptes configurés du batch dans ce mode.
+
+Le profil courant est B témoin : TOP10 % Oracle H10 → jusqu'à TOP10 LONG
+par titre, score >0,50 et AUC ≥0,50, sans application de l'anti-SL ni filtres
+GPT/options. Entrée sans confirmation, SL5 %, sans TP/trailing, sortie open11,
+ordres DAY. La page relit les réglages, sans conserver une copie indépendante.
+Les résultats de 10 et les décisions de 11 par compte viennent des archives
+scellées de la sélection correspondante ; ils ne prouvent pas le remplissage.
+
+**Option GPT/DeepSeek manuelle :** le mode commun propose une case supplémentaire,
+décochée par défaut, **Filtrage GPT — données locales uniquement après le
+classement LONG per-symbol** (le libellé suit le fournisseur/mode configuré).
+Elle ajoute un filtre à ce lancement uniquement, sans changer le batch planifié.
+Le parcours devient Oracle → LONG per-symbol → GPT/DeepSeek → risque → Winner.
+Le LLM reçoit uniquement les candidats LONG retenus, avec l'horizon du modèle
+(H10 pour B). Il peut en retirer, sans remplacement par les rangs suivants et
+sans SHORT automatique. Les protections et le dimensionnement B restent ceux
+du profil. Cette variante n'est donc plus la sélection exacte du témoin.
+
+`llm_directional_filter.enabled: false` reste le défaut planifié ;
+`manual_opt_in_allowed: true` autorise la case manuelle. Passer ce dernier
+réglage à `false` bloque cette possibilité. Cocher la case ne lance aucun appel :
+les appels payants ont lieu seulement au lancement de l'étape10. Les réponses
+sont archivées dans les tables LLM existantes ; une réponse invalide bloque
+la publication, sans repli sur les candidats non filtrés. La sélection scellée
+est ensuite partagée entre les comptes, sans réinterroger le LLM pour chacun.
+Le rattrapage conserve ses choix initiaux ; la case ne modifie pas un ancien run.
+Le score reste une tendance 1–10, pas une probabilité de hausse sans toucher SL.
+
+Le suivi et les logs restent dans le centre d'exécution. Le contrôle de clôture
+US est conservé ; le bouton de rattrapage n'apparaît que pour une séance
+éligible. Décochez la case pour retrouver les paramètres personnalisés,
+l'entraînement et les lancements d'étapes indépendantes. Ces réglages
+personnalisés sont conservés ; ils n'interviennent pas dans le mode commun.
+Ouvrir la page ne lance aucun pipeline, watcher, achat ou appel LLM.
+
 **01/11/2026 — reprise sécurisée :** sous le centre d'exécution, le panneau
 **🔓 Déverrouiller une reprise — étapes 11/12 et watchers** apparaît seulement
 si un verrou concerné existe. Choisir le verrou, vérifier, puis confirmer.

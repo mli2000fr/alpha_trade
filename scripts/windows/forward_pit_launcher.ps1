@@ -11,7 +11,8 @@ param(
     [string]$EnvFilePath,
     [switch]$Force,
     [switch]$DryRun,
-    [string]$RecoverySessionDate
+    [string]$RecoverySessionDate,
+    [switch]$Q051LlmFilter
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -22,6 +23,9 @@ $python = (Resolve-Path -LiteralPath $PythonExePath).Path
 $configPath = if ($BatchConfigPath) { $BatchConfigPath } else { Join-Path $workspace 'batch.yaml' }
 if ($RecoverySessionDate -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -notmatch '^\d{4}-\d{2}-\d{2}$')) {
     throw 'Rattrapage réservé à us_pipeline avec une date YYYY-MM-DD.'
+}
+if ($Q051LlmFilter -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -or -not $Force)) {
+    throw 'GPT manuel réservé à un nouveau lancement explicite us_pipeline (-Force), sans rattrapage.'
 }
 if (-not [IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $workspace $configPath }
 $pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; d=c.get(''defaults'') or {}; s=c.get(sys.argv[2]) or {}; print(json.dumps({**d,**s}))'
@@ -113,6 +117,7 @@ try {
     $runnerArguments = @('-u','-m',$RunnerModule,$RunnerBatchArgument,$BatchName,'--batch-config',$configPath)
     if ($DryRun) { $runnerArguments += '--dry-run' }
     if ($RecoverySessionDate) { $runnerArguments += @('--us-pipeline-recovery-date', $RecoverySessionDate) }
+    if ($Q051LlmFilter) { $runnerArguments += '--us-pipeline-llm-filter' }
     $stdoutTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stdout_$PID.txt"
     $stderrTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stderr_$PID.txt"
     try {

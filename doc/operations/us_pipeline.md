@@ -6,6 +6,44 @@
 
 ## Périmètre
 
+**19 novembre 2026 — la page Pipeline utilise le batch par défaut.** La case
+« Utiliser la configuration du batch us_pipeline », cochée par défaut, propose
+le lanceur batch existant, avec les mêmes étapes, collectes, notifications,
+contrôles de calendrier, préparation du watcher et comptes PAPER secondaires.
+La construction des options fraîches est partagée via
+`service.forward_pit.us_pipeline.fresh_pipeline_options`. La reprise conserve
+les options déjà scellées ; elle ne reconstruit pas un ancien plan.
+Les paramètres manuels restent disponibles en décochant la case.
+[Utilisation de la page et distinction des deux modes](../guide_utilisateur/03_pipeline.md).
+
+L'option LLM manuelle du mode commun est transmise par `-Q051LlmFilter` au
+lanceur, puis `--us-pipeline-llm-filter` au runner. Elle est interdite hors
+us_pipeline, sans lancement manuel explicite ou lors d'un rattrapage.
+Le runner ajoute `_manual_q051_llm_filter` à la seule configuration du run,
+sans écrire les YAML. Cette option n'est pas présente dans les tâches planifiées.
+Seule la commande de prédiction porte `--llm-filter` ; 11/12 relisent la
+sélection scellée et revalident les réponses archivées avant risque/exécution.
+Le LLM a sa propre trace liée au run Q051 et à la liste préfiltrée. Il reste
+LONG uniquement et n'a pas autorité sur le profil de risque ou les protections.
+
+Validation du raccordement manuel : **717 tests passent**, dont les contrôles
+de lancement, de sélection, de sources datées, de réponses LLM, de profils et
+de partage entre comptes. Le parseur PowerShell valide le lanceur modifié.
+Reçu : `artifacts/operations/q051_manual_llm_20261119/tests-final.xml`.
+Les appels des tests utilisent des doubles de test ; aucun appel fournisseur
+payant ni ordre broker n'a été lancé pour cette validation. La vérification
+TLS hors réseau a été exécutée sans le journal de clés TLS du processus de
+test, dont le tube Windows n'était pas accessible ; la vérification des
+certificats HTTPS reste activée.
+
+Le déploiement courant utilise `us_pipeline.b_anti_sl_reference.enabled: true`
+avec `apply_anti_sl: false` (B témoin), modèle
+`model-factory-20261118172104-2f6a31`. TOP10 % Oracle → TOP10 LONG par titre,
+SL5/open11, sans vol20/régime/B4, ni filtres options/GPT. Les entrées et sorties
+temporelles utilisent DAY. Les paramètres Q051 vol20/régime décrits ci-dessous
+sont conservés pour l'historique ; ce profil est actuellement désactivé.
+[Correctif des ordres et protections](q051_watcher_day_reparation_20261119.md).
+
 **14 novembre 2026 : parcours Q051 vol20 + régime activé en PAPER.**
 `config.yaml → us_pipeline.q051_vol20_regime.enabled: true` sélectionne le
 parcours dédié des étapes 10/11/12, prioritaire sur options/GPT et indépendant
