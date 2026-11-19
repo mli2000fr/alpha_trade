@@ -561,6 +561,10 @@ connexion CN/FR est refusée. Aucune nouvelle table ni migration n'est nécessai
 
 ## Suivi, concurrence et notifications
 
+Un [bouton de rattrapage manuel avant ouverture](us_pipeline_rattrapage_manuel.md)
+permet de traiter explicitement la dernière séance clôturée non finalisée,
+sans désactiver le contrôle de clôture de la séance courante.
+
 Le workflow utilise le registre et le verrou partagés avec l'IHM : il ne contourne pas un pipeline déjà actif. Son identifiant est enregistré dans le détail du run du batch. Les journaux et l'avancement des étapes restent consultables via le registre Pipeline, et le résumé apparaît dans la page Batch.
 
 Journal du launcher : `log/batch/us_pipeline.txt`. Le détail du run conserve également le chemin du journal du workflow et, en cas d'échec d'une étape, son identifiant et son code retour.

@@ -86,6 +86,49 @@ def test_false_runs_primary_only_and_does_not_enumerate_accounts(env):
     assert result.requested==result.persisted==3
 
 
+def test_explicit_recovery_pins_previous_session_without_changing_now(env,monkeypatch):
+    from datetime import UTC, datetime
+    from service.forward_pit import us_pipeline_recovery
+    calls=[]
+    def require(engine,requested,**kw):
+        calls.append((requested,kw))
+        return dict(trade_date='2026-11-18',completed_accounts=[],resume_options=None)
+    monkeypatch.setattr(us_pipeline_recovery,'require_recovery',require)
+    monkeypatch.setattr(us_pipeline,'session_plan',lambda *a:pytest.fail('current session should not be selected'))
+    now=datetime(2026,11,19,7,tzinfo=UTC)
+    result=us_pipeline.execute_pipeline(SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
+        dict(market_code='US_EQ',_manual_recovery_date='2026-11-18'),'recovery-run',False,now=now)
+    assert result.requested==result.persisted==7
+    assert all(r['options'].trade_date=='2026-11-18' for r in env.starts)
+    assert calls[0][1]['now']==now and calls[0][1]['exclude_run_id']=='recovery-run'
+    assert result.details['date_override']=='PIN_LAST_CLOSED_SESSION_EXPLICIT_RECOVERY'
+
+
+def test_recovery_never_replays_completed_primary_and_keeps_exact_selection(env,monkeypatch):
+    from service.forward_pit import us_pipeline_recovery
+    original=env.run(True).details['options']
+    original['trade_date']='2026-11-18'
+    selection=original['options_filter_run_id']
+    monkeypatch.setattr(us_pipeline_recovery,'require_recovery',lambda *a,**kw:
+        dict(trade_date='2026-11-18',completed_accounts=['default'],resume_options=original))
+    result=us_pipeline.execute_pipeline(SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
+        dict(market_code='US_EQ',_manual_recovery_date='2026-11-18'),'recovery-run',False)
+    assert result.requested==result.persisted==4
+    assert [r['options'].account_id for r in env.starts]==['test1','test2']
+    assert all(r['options'].options_filter_run_id==selection for r in env.starts)
+    assert all(r['kwargs']['selected_step_keys']==('risk_management','execution') for r in env.starts)
+
+
+def test_recovery_already_completed_at_click_does_not_launch_anything(env,monkeypatch):
+    from service.forward_pit import us_pipeline_recovery
+    def unavailable(*a,**kw):raise ValueError('séance déjà finalisée')
+    monkeypatch.setattr(us_pipeline_recovery,'require_recovery',unavailable)
+    with pytest.raises(ValueError,match='déjà finalisée'):
+        us_pipeline.execute_pipeline(SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
+            dict(market_code='US_EQ',_manual_recovery_date='2026-11-18'),'recovery-run',False)
+    assert not env.starts and not env.watchers
+
+
 def test_dry_plan_lists_secondary_commands_without_starting_anything(env):
     result=env.run(True)
     assert result.requested==7 and result.persisted==0
@@ -132,6 +175,36 @@ def test_busy_secondary_keeps_primary_success_counters(env):
     with pytest.raises(BatchRunError,match='could not start account=test1') as error:env.run()
     assert len(env.starts)==1 and error.value.outcome.persisted==3
     assert error.value.outcome.details['account_workflows'][0]['status']=='completed'
+
+
+def test_next_account_waits_for_terminal_workflow_cleanup(env,monkeypatch):
+    native_poll=process_registry.poll_pipeline_run
+    waits=[];finalizing={'workflow-default':True}
+    def poll(run):
+        result=native_poll(run)
+        result['workflow_finalizing']=finalizing.get(run,False)
+        return result
+    def sleep(seconds):
+        assert [r['options'].account_id for r in env.starts]==['default']
+        waits.append(seconds);finalizing['workflow-default']=False
+    monkeypatch.setattr(process_registry,'poll_pipeline_run',poll)
+    monkeypatch.setattr(us_pipeline.time,'sleep',sleep)
+    result=env.run()
+    assert waits==[.5] and result.persisted==7
+    assert [r['options'].account_id for r in env.starts]==['default','test1','test2']
+
+
+def test_stuck_cleanup_fails_without_starting_another_account(env,monkeypatch):
+    native_poll=process_registry.poll_pipeline_run
+    def poll(run):
+        return {**native_poll(run),'workflow_finalizing':True}
+    monkeypatch.setattr(process_registry,'poll_pipeline_run',poll)
+    monkeypatch.setattr(us_pipeline,'WORKFLOW_FINALIZATION_TIMEOUT_SECONDS',0)
+    with pytest.raises(BatchRunError,match='finalization timed out') as error:
+        env.run()
+    assert len(env.starts)==1
+    assert error.value.outcome.persisted==3
+    assert error.value.outcome.details['workflow_finalization_timeout']=='workflow-default'
 
 
 def test_primary_can_be_another_account_and_is_never_duplicated(env):

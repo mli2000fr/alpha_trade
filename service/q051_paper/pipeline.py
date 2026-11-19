@@ -45,9 +45,23 @@ def directory(run_id):
 def contract(batch, artifacts_dir, day):
     from modelFactory.oracle_path.predict import load_contract
     from modelFactory.oracle_path.directional import enabled, load_manifest
+    requirements = reference().get('requirements', {})
+    if requirements:
+        from modelFactory.oracle_path.predict import model_root
+        path = model_root(artifacts_dir, batch)
+        if not (path/'report.json').is_file():
+            raise ValueError('B témoin : entraînement du batch non terminé ; attendre Oracle, per-symbol et anti-SL avant étape10.')
     root, protocol, profile, folds = load_contract(artifacts_dir, batch)
     if protocol['horizon'] != 10 or not enabled(protocol):
         raise ValueError('Q051 exige Oracle parcours H10 avec bundle per-symbol LONG')
+    if requirements:
+        if protocol.get('directional_contract', {}).get('feature_mode') != requirements['directional_feature_mode']:
+            raise ValueError('B témoin : batch per-symbol compact_volatility (29 variables) requis')
+        if requirements['anti_sl']:
+            from modelFactory.oracle_path.anti_sl import enabled as anti_enabled, load_manifest as load_anti_manifest
+            if not anti_enabled(protocol):
+                raise ValueError('B + anti-SL : sélectionner un batch avec tête anti-SL entraînée')
+            load_anti_manifest(root)
     manifest, _ = load_manifest(root)
     if not any(r['side'] == 'long' and r['year'] == day.year and pd.Timestamp(r['available']).date() < day
                for r in manifest['models']):
@@ -61,7 +75,8 @@ def rank_selection(verified, model_root, universe_size):
     config = PerSymbolSelection(oracle_top_n=max(1, math.ceil(universe_size*policy['oracle_fraction'])),
         long_top_n=policy['long_top_n'], allow_short=False,
         min_long_probability=policy['min_long_probability'], min_long_auc=policy['min_long_auc'])
-    return select_per_symbol(attach_calibration_auc(verified, model_root), config), config
+    return select_per_symbol(attach_calibration_auc(verified, model_root), config,
+        apply_anti_sl=policy.get('apply_anti_sl', True)), config
 
 
 def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
@@ -104,11 +119,12 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default'):
     from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
     if anti_enabled(protocol):
         report.update(anti_sl_manifest_sha256=digest(root/'anti_sl/manifest.json'),
-            anti_sl_excluded=int(ranked.anti_sl_rejected.sum()),anti_sl_automatic=True)
+            anti_sl_excluded=int(ranked.anti_sl_rejected.sum()),
+            anti_sl_automatic=reference()['selection'].get('apply_anti_sl', True))
     write(folder/'selection.json', report)
     write(folder/'seal.json', dict(report_sha256=digest(folder/'selection.json')))
-    LOG.info('Q051 : TOP%d Oracle → %d LONG (TOP5 puis score>0.50/AUC>=0.50, sans remplissage)',
-             policy.oracle_top_n, len(selected))
+    LOG.info('%s : TOP%d Oracle → %d LONG (TOP%d puis score>0.50/AUC>=0.50, sans remplissage)',
+             reference()['profile_id'], policy.oracle_top_n, len(selected), policy.long_top_n)
     return report
 
 
@@ -118,6 +134,8 @@ def qualified(run_id, *, batch, day, artifacts_dir):
     seal = json.loads((folder/'seal.json').read_text())
     root, protocol = contract(batch, artifacts_dir, day)
     validate_frozen(report['profile'])
+    if report['profile'] != reference():
+        raise ValueError('Profil de la sélection différent du lancement ; reprendre le profil exact de l’étape10')
     from modelFactory.oracle_path.anti_sl import enabled as anti_enabled
     if anti_enabled(protocol) and report.get('anti_sl_manifest_sha256')!=digest(root/'anti_sl/manifest.json'):
         raise ValueError('Q051 : manifeste anti-SL différent de la sélection publiée')
@@ -203,9 +221,11 @@ def risk(engine, folder, selection, account, day):
                 target_weight=q*price/context['equity'], target_notional=q*price,
                 score_used=float(row['long_probability']), score_source='q051_per_symbol_long',
                 conviction_score=float(row['long_probability']), predicted_proba=float(row['long_probability']),
-                sizing_method='q051_sl5_cov60_vol20', selection_rank=int(row['rank']), decision_rank=int(row['rank']),
+                sizing_method=('q051_sl5_cov60_vol20' if reference()['portfolio_volatility'].get('enabled', True)
+                    else 'b_witness_sl5'), selection_rank=int(row['rank']), decision_rank=int(row['rank']),
                 sector=context['sector_map'].get(symbol, 'UNKNOWN'), side='long',
-                selector_signal_mode='q051_vol20_regime', selection_explanation='TOP10% Oracle → TOP5 LONG; score>0.50; AUC>=0.50',
+                selector_signal_mode=reference()['profile_id'],
+                selection_explanation=f'TOP10% Oracle → TOP{reference()["selection"]["long_top_n"]} LONG; score>0.50; AUC>=0.50',
                 selector_earnings_blackout=False, price_asof_date=day, prediction_asof_date=day,
                 stop_price_initial=float(price)*.95, risk_per_share=float(price)*.05,
                 risk_budget_dollars=context['equity']*.0125, initial_risk_dollars=q*price*.05,
@@ -305,13 +325,22 @@ def main():
     parser.add_argument('--trade-date', required=True)
     parser.add_argument('--account', required=True)
     parser.add_argument('--artifacts-dir', default='artifacts/models')
+    from common.q051_paper import PROFILE_FILES, PROFILE_ID, profile_scope
+    parser.add_argument('--profile-id', choices=list(PROFILE_FILES), default=PROFILE_ID)
     args = parser.parse_args()
+    with profile_scope(args.profile_id):
+        run_stage(args)
+
+
+def run_stage(args):
     logging.basicConfig(level=logging.INFO)
     require_paper(args.account)
     policy = settings()
     if (not policy['enabled'] or policy['model_batch_id'] != args.batch_id
             or Path(args.artifacts_dir).resolve() != Path(policy['artifacts_dir']).resolve()):
         raise ValueError('Q051 : profil désactivé ou batch différent du paramétrage actif')
+    if args.stage == 'predict' and policy['profile_id'] != args.profile_id:
+        raise ValueError('Profil de prédiction différent du paramétrage actif ; reconstruire le lancement')
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine(db_name='alpha_trade')
     if engine.url.database != 'alpha_trade':

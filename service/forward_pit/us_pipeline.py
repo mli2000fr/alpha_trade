@@ -18,6 +18,7 @@ from ihm.services.pipeline_runner import (
 
 LOGGER = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_FINALIZATION_TIMEOUT_SECONDS = 120
 
 
 def load_pipeline_policy():
@@ -212,26 +213,51 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         raise ValueError('US pipeline requires alpha_trade, never CN/FR')
     if cfg.get('market_code') != 'US_EQ':
         raise ValueError('US_EQ market scope required')
-    day, skip = session_plan(now or datetime.now(UTC))
+    recovery = None
+    if cfg.get('_manual_recovery_date') is not None:
+        from service.forward_pit.us_pipeline_recovery import require_recovery
+        recovery = require_recovery(engine, cfg['_manual_recovery_date'], now=now,
+                                    root=ROOT, exclude_run_id=run_id)
+        from datetime import date
+        day, skip = date.fromisoformat(recovery['trade_date']), None
+    else:
+        day, skip = session_plan(now or datetime.now(UTC))
     policy = load_pipeline_policy()
     if skip:
         return Outcome(details={'skip_reason': skip, 'trade_date': str(day), 'counter_unit': 'pipeline_steps'})
     steps_key, steps = session_steps(policy, day)
-    options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
-    options = execution_options(options, policy, steps)
-    if {s.num for s in steps}.intersection({'10','11','12'}):
-        from common.q051_paper import pipeline_options
-        options = pipeline_options(options, policy)
-        if options.q051_paper_enabled and {s.num for s in steps}.intersection({'11','12'}) and '10' not in {s.num for s in steps}:
-            raise ValueError('Q051 quotidien : inclure étape 10 pour figer une nouvelle sélection partagée')
-    options = llm_options(options, steps)
-    options = options_filter_options(options, steps)
+    if recovery and recovery['resume_options']:
+        from ihm.services.pipeline_runner import PipelineLaunchOptions
+        options = PipelineLaunchOptions(**recovery['resume_options'])
+        if options.trade_date != str(day) or options.account_id != policy.get('account_id', 'default'):
+            raise ValueError('Rattrapage : séance/compte différent du plan initial')
+        checked = execution_options(options, policy, steps)
+        if checked.execution_mode != options.execution_mode:
+            raise ValueError('Rattrapage : mode d’exécution différent du plan initial')
+    else:
+        options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
+        options = execution_options(options, policy, steps)
+        if {s.num for s in steps}.intersection({'10','11','12'}):
+            from common.q051_paper import pipeline_options
+            options = pipeline_options(options, policy)
+            if options.q051_paper_enabled and {s.num for s in steps}.intersection({'11','12'}) and '10' not in {s.num for s in steps}:
+                raise ValueError('Q051 quotidien : inclure étape 10 pour figer une nouvelle sélection partagée')
+        options = llm_options(options, steps)
+        options = options_filter_options(options, steps)
     other_accounts = additional_paper_accounts(options, policy, steps)
     secondary_steps = selected_steps([11, 12])
     account_plans = [(replace(options, account_id=account), secondary_steps) for account in other_accounts]
+    preserved = set(recovery['completed_accounts']) if recovery else set()
+    all_accounts = {options.account_id, *other_accounts}
+    if not preserved.issubset(all_accounts):
+        raise ValueError('Rattrapage : liste des comptes différente du plan initial')
+    remaining_plans = [(opts, seq) for opts, seq in [(options, steps), *account_plans]
+                       if opts.account_id not in preserved]
+    if not remaining_plans:
+        raise ValueError('Tous les comptes sont déjà finalisés pour cette séance')
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
-        strategy_profile='q051_vol20_regime_v1' if options.q051_paper_enabled else 'standard',
-        date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
+        strategy_profile=options.q051_profile_id if options.q051_paper_enabled else 'standard',
+        date_override='PIN_LAST_CLOSED_SESSION_EXPLICIT_RECOVERY' if recovery else 'PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],
         selected_step_numbers=[int(s.num) for s in steps],
         configuration_source='config.yaml:us_pipeline',
@@ -248,10 +274,19 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         watcher_before_execution=any(s.num=='12' for s in steps) and options.execution_mode=='paper',
         execution_orders=any(s.num=='12' for s in steps) and options.execution_mode=='paper')
     if options.q051_paper_enabled:
-        LOGGER.info('Q051 vol20 + régime PAPER actif : TOP10%% Oracle H10 → TOP5 LONG, SL5/open11, '
-            'plafond achats1x, sans B4/DD15 ni options/GPT ; sélection=%s modèle=%s',
+        from common.q051_paper import reference
+        active_profile = reference(options.q051_profile_id)
+        LOGGER.info('Profil %s PAPER actif : TOP10%% Oracle H10 → TOP%d LONG, SL5/open11, '
+            'plafond achats1x, sans B4/DD15 ni options/GPT ; anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
+            options.q051_profile_id, active_profile['selection']['long_top_n'],
+            active_profile['selection'].get('apply_anti_sl', 'selon modèle'),
+            active_profile['portfolio_volatility'].get('enabled', True), active_profile['regime'].get('enabled', True),
             options.q051_run_id,options.ml_live_predict_batch_id)
-    outcome = Outcome(requested=len(steps)+2*len(other_accounts), details=plan)
+    if recovery:
+        plan['recovery'] = {k:v for k,v in recovery.items() if k != 'resume_options'}
+        LOGGER.info('Rattrapage explicite séance=%s ; comptes déjà terminés conservés=%s ; comptes restants=%s',
+                    day, sorted(preserved), [opts.account_id for opts, _ in remaining_plans])
+    outcome = Outcome(requested=sum(len(seq) for _, seq in remaining_plans), details=plan)
     if dry_run:
         LOGGER.info('US pipeline plan: %s', json.dumps(plan, default=str))
         return outcome
@@ -268,7 +303,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
             outcome.details['watcher_before_execution_result'] = result
         return result
     outcome.details.update(plan_path=str(directory/'plan.json'), account_workflows=[])
-    for account_options, account_steps in [(options, steps), *account_plans]:
+    for account_options, account_steps in remaining_plans:
         account = account_options.account_id
         outcome.details['active_account_id'] = account
         try:
@@ -287,6 +322,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         LOGGER.info('US pipeline account=%s workflow=%s trade_date=%s steps=%s',
             account, record.run_id, day, account_result['selected_step_numbers'])
         previous, offset = None, outcome.persisted
+        finalization_started = None
         while True:
             try:
                 snapshot = poll_pipeline_run(record.run_id)
@@ -306,6 +342,19 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
                     account, completed, len(account_steps), progress[1], outcome.persisted, outcome.requested)
                 previous = progress
             if snapshot.get('status') not in ('starting', 'running', 'scheduled'):
+                if snapshot.get('workflow_finalizing', False):
+                    if finalization_started is None:
+                        finalization_started = time.monotonic()
+                        LOGGER.info('US pipeline account=%s : attente de la libération du workflow=%s',
+                                    account, record.run_id)
+                    if time.monotonic()-finalization_started >= WORKFLOW_FINALIZATION_TIMEOUT_SECONDS:
+                        outcome.failed = 1
+                        outcome.details['failed_account_id'] = account
+                        outcome.details['workflow_finalization_timeout'] = record.run_id
+                        raise BatchRunError(f'US workflow finalization timed out account={account}; '
+                            'no subsequent account launched', outcome)
+                    time.sleep(.5)
+                    continue
                 account_result.update(status=snapshot.get('status'), completed_steps=completed,
                     summary=snapshot.get('run_summary') or {}, log=snapshot.get('combined_path'))
                 outcome.details['workflow_status'] = snapshot.get('status')

@@ -10,7 +10,8 @@ param(
     [string]$LogFile,
     [string]$EnvFilePath,
     [switch]$Force,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$RecoverySessionDate
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -19,6 +20,9 @@ $workspace = (Resolve-Path -LiteralPath $WorkspacePath).Path
 if (-not $PythonExePath) { $PythonExePath = Join-Path $workspace '.venv\Scripts\python.exe' }
 $python = (Resolve-Path -LiteralPath $PythonExePath).Path
 $configPath = if ($BatchConfigPath) { $BatchConfigPath } else { Join-Path $workspace 'batch.yaml' }
+if ($RecoverySessionDate -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -notmatch '^\d{4}-\d{2}-\d{2}$')) {
+    throw 'Rattrapage réservé à us_pipeline avec une date YYYY-MM-DD.'
+}
 if (-not [IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $workspace $configPath }
 $pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; d=c.get(''defaults'') or {}; s=c.get(sys.argv[2]) or {}; print(json.dumps({**d,**s}))'
 $cfgText = ((& $python -c $pyCode $configPath $BatchName 2>$null) | Out-String).Trim()
@@ -106,16 +110,27 @@ try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName already-running"; exit 0 }
     $started = Get-Date; Write-Status "[$($started.ToString('yyyy-MM-dd HH:mm:ss'))] START $BatchName pid=$PID"
-    $args = @('-u','-m',$RunnerModule,$RunnerBatchArgument,$BatchName,'--batch-config',$configPath)
-    if ($DryRun) { $args += '--dry-run' }
+    $runnerArguments = @('-u','-m',$RunnerModule,$RunnerBatchArgument,$BatchName,'--batch-config',$configPath)
+    if ($DryRun) { $runnerArguments += '--dry-run' }
+    if ($RecoverySessionDate) { $runnerArguments += @('--us-pipeline-recovery-date', $RecoverySessionDate) }
     $stdoutTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stdout_$PID.txt"
     $stderrTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stderr_$PID.txt"
     try {
-        # Start-Process garde stderr comme texte brut, sans NativeCommandError PowerShell.
-        $batchProcess = Start-Process -FilePath $python -ArgumentList $args `
-            -WorkingDirectory $workspace -Wait -PassThru -WindowStyle Hidden `
+        # Redirection native de stderr, sans NativeCommandError PowerShell.
+        # Ne pas utiliser Start-Process -Wait : il attend aussi les descendants,
+        # dont le watcher persistant, et garde alors mutex/notification bloqués.
+        # WaitForExit attend uniquement le runner et laisse ses protections vivre.
+        $batchProcess = Start-Process -FilePath $python -ArgumentList $runnerArguments `
+            -WorkingDirectory $workspace -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $stdoutTmp -RedirectStandardError $stderrTmp
+        # Windows PowerShell 5.1 ne conserve pas toujours le handle natif.
+        # Le matérialiser avant l'attente rend ExitCode disponible même sans -Wait.
+        $runnerHandle = $batchProcess.Handle
+        $batchProcess.WaitForExit()
+        $batchProcess.Refresh()
         $exitCode = $batchProcess.ExitCode
+        if ($null -eq $exitCode) { throw "Code de sortie du runner indisponible ; succès non confirmé." }
+        $batchProcess.Dispose()
         $captured = @()
         if (Test-Path -LiteralPath $stdoutTmp) {
             $captured += @(Get-Content -LiteralPath $stdoutTmp -Encoding UTF8)

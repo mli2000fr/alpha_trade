@@ -9538,3 +9538,103 @@ Inventaire SQL38tables en lecture seule : historiquesSEC significatifs présents
 Conclusion : **pas de combinaison suffisamment fiable trouvée pour remplacer le contrôleur, pas d’impossibilité générale démontrée**. Pas de nouveau seuil retenu pour expliquer uniquement2024/25.15tests ciblés passent, contrôles de préfixe et empreintes archivés. Aucun entraînementOracle/per-symbol, téléchargement, appelLLM, écritureSQL, ordre ou changement de production. Les témoins sources conservent leurs limites de prix révisés, univers contemporain et intraday partiel/repliOHLC.
 
 Rapport : `doc/ml/q051_protection_feature_audit_20261118.md`. Archives : `artifacts/research/us_q051_protection_feature_audit/20261118-v1`, dont `sentinel-stability.png`, `warning-timing-diagnostic.png`, `nomination-2024-purged.csv` et `final-audit-status.json`.
+
+<!-- B_ANTI_SL_PAPER_CONFIG_20261118 -->
+
+# B / B + anti-SL témoin — profil quotidien PAPER et interrupteur de veto
+
+18novembre2026, raccordement demandé par l’utilisateur au batch `model-factory-20261118172104-2f6a31`, encore en entraînement. `us_pipeline.b_anti_sl_reference.enabled=true`, ancien `q051_vol20_regime.enabled=false`. `apply_anti_sl=true` choisit `q051_b_anti_sl_witness_v1` ; false choisit `q051_b_witness_v1`. Deux profils statiques distincts ; choix figé dans la sélection et transmis aux étapes10/11/12 de chaque compte, sans conversion des campagnes déjà ouvertes. Pas d’ajout de filtre options/GPT.
+
+TOP10%OracleH10 → TOP10LONG B29, score>0,50/AUC calibration≥0,50, puis veto optionnel sans remplacement. Position complète, entréeJ+1sans confirmation5m, SL5/open11, sans TP/trailing/renforcement. Risque archivé1,25%, poids20%,20positions, minimum50$, plafond achats1×/capacitémargin2×. Sans budget vol20, régimeSPY, B4/DD, facteurs/corrélation/secteurs ; contrôles compte, capacité, prixJ, réservations, verrous et protections broker conservés. Le contexte B n’exige plus de SPY ni de covariance inutilisés.
+
+Nouveaux profils dérivés de la configuration de rechercheSL10, empreintes archivées ; ancien JSON vol20/régime inchangé. Winner global aligné0confirmation/validité1/horizon10. Pour les futurs entraînements, fractionOracle0,10résolue sur l’univers complet et TOP LONG10. Le contrat TOP20/TOP5 du modèle actuellement entraîné reste inchangé ; le profil PAPER reclasse ses probabilités179→TOP10. Entraînement incomplet : arrêt explicite avant appel broker, aucun fallback vers l’ancien modèle.
+
+263tests ciblés distincts passent : profils nouveaux/anciens, ON/OFF sans remplissage, seuils/lineage conservés, routage multi-comptes, tailles/capital, capture sans SPY/covariance, revalidation native au watcher avec profil de campagne, soumission OPG/SL5/open11 sur faux broker, couvertures et entraînement. Prévol de la configuration réelle archivé, sansSQL ni fournisseur. Aucun entraînement supplémentaire, interruption du run, redémarrage de service ou ordre effectué ; aucune nouvelle performance revendiquée et pas de certification de parité live.
+
+Guide : `doc/ml/b_anti_sl_paper_20261118.md`. Prévol : `artifacts/operations/b_anti_sl_profile_setup/20261118-v1/validation.json`.
+
+Mise à jour le18novembre : batch terminé et contrat complet vérifié en lecture seule ; OracleH10/173variables/10folds, B29 avec1761LONG+1761SHORT pour2026, anti-SL44 avec tête2026 disponible2025-12-31. Aucun score ou ordre lancé ; reçu `model-ready-validation.json`. CorrectionIHM : un ancien lecteurSettings resté en mémoire refusait `oracle_top_fraction`. Le formulaire utilise désormais un lecteur de configuration versionné qui recharge uniquement le moduleIHM nécessaire lorsque la version est ancienne, sans redémarrer l’interface ou les processus de calcul.16tests ciblés passent, dont reproduction exacte de l’import ancien puis correction et rendu du formulaire aux trois horizons.
+
+<!-- Q051_B_SHORT_ONLY_20261118 -->
+
+# B — SHORT seul, 2021–2026
+
+18 novembre 2026. Test demandé sans LONG : mêmes Oracle H10 annuels et univers 1 790 du témoin B, TOP10 % (179) → TOP10 SHORT B29, score >0,50/AUC calibration ≥0,50, sans remplissage. Modèles annuels causaux par titre : 431 lots, 3 089 têtes entraînées, 945 skips explicites ; 11 660 signaux retenus avant contraintes. Nouveaux modèles de recherche, aucune réutilisation rétroactive de la tête fin 2026. Anti-SL LONG désactivé.
+
+4 000 $ continus du 4 janvier 2021 au 1er octobre 2026. Positions entières complètes, entrée J+1 à l'ouverture, SL5 % au-dessus du fill, sans TP/trailing/confirmation/renforcement, rachat open11. Risque 1,25 %, poids 20 %, 20 slots SHORT, minimum 50 $, plafond nouvelles entrées 1×, capacité margin 2×. Concentration 10/90 jours et pause 90 jours après trois pertes consécutives, côté SHORT. Sans B4/DD, régime, budget vol20, facteurs, corrélation ou secteurs.
+
+**Capital final 341,97 $, rendement −91,45 %, DD maximal de clôture −92,09 %, 1 460 trades, 31,58 % gagnants.** 461 gagnants (+6 960,43 $) et 999 perdants (−10 619,80 $), profit factor 0,655 ; gain/perte moyens +8,41 %/−5,26 %. 926 stops dont 104 gaps ; cinq positions encore ouvertes, valorisées. Toutes les années ont un rendement du compte négatif, y compris 2022. AUC de test SHORT sur le pool Oracle scoré : 0,503–0,512 selon l'année.
+
+Frais 8 bps/côté (457,07 $) et emprunt **supposé 3 % annuel** (199,93 $), inclus. Emprunts/locates/recalls historiques et inventaire exhaustif de dividendes non certifiés. Notionnel brut de clôture moyen 966,09 $, soit 81,12 % du capital courant en moyenne. Coordinateur OHLC journalier utilisant le `ShortReplayBroker` isolé ; moteur Winner LONG/live inchangé. Les DD comparables de clôture des témoins archivés sont B LONG −39,40 % (+297,35 %) et B LONG + anti-SL −34,08 % (+303,52 %) ; ne pas confondre avec leurs anciens DD intraday −40,99 %/−34,98 %. Les témoins LONG n'ont pas été rejoués ici.
+
+29 tests ciblés passent ; modèles/dates/sélections/plafonds/J+1/open11/stops et PnL des trades vérifiés, identité comptable quotidienne avec dette SHORT/frais/emprunt/dividendes connus. Zéro position dans les réserves DD/Qnity/TOELY identifiées ; pas de certification générale des corporate actions. Résultat exploratoire, historique déjà exploré et univers contemporain, aucun nouveau holdout indépendant. **Variante non retenue pour le trading**, aucun réglage réoptimisé après résultat. Aucun appel fournisseur/LLM, écriture SQL, ordre ou changement de production.
+
+Rapport : `doc/ml/q051_b_short_20261118.md`. Archives : `artifacts/research/us_q051_b_short/20261118-v1` ; bilan `final-status.json`, courbe `capital-comparison.png`, comparaisons annuelles et métriques de classification incluses.
+
+<!-- B_SHORT_CURRENT_BATCH_20261118 -->
+
+# B — SHORT seul avec le batch actuel, 2025–2026
+
+18 novembre 2026, précision de l'utilisateur : **2025–2026 avec `model-factory-20261118172104-2f6a31`**, distinct du test annuel 2021–2026 ci-dessus. Aucun nouveau fit : Oracle H10 causal du batch et têtes SHORT B29 2025/2026 natives. TOP10 % de l'univers 1 790 (179) → TOP10 SHORT, score >0,50/AUC calibration ≥0,50, sans remplacement et sans anti-SL LONG. 72 lots d'inférence, 933 têtes utilisées, 69 771 probabilités comparables aux archives OOS natives : écart maximal **0**. Les archives OOS ne déterminent jamais les observations admissibles avant décision.
+
+4 000 $ continus de janvier 2025 au **1er octobre 2026**, premières transactions le 3 janvier faute de tête 2024 pour le signal du 31 décembre. Entrée quotidienne J+1 sans confirmation, position complète entière, SL5 % au-dessus du fill, sans TP/trailing/renforcement, rachat open11. Risque 1,25 %, poids 20 %, vingt slots SHORT, minimum 50 $, plafond nouvelles entrées 1×/capacité margin 2×, concentration 10 entrées/90 jours et pause 90 jours après trois pertes consécutives par titre/côté. Sans B4/DD, régime/vol20/facteurs/corrélation/secteurs. Même coordinateur SHORT isolé et même matrice d'exécution de recherche que l'essai précédent, sans modifier Winner LONG/live.
+
+**Final 2 027,45 $, rendement −49,31 %, DD de clôture −57,73 %, 554 trades, 27,98 % gagnants** : 155 gagnants (+6 378,52 $) et 399 perdants (−8 405,38 $). Gain/perte moyens +9,71 %/−5,31 %. 375 stops, dont 41 gaps ; cinq positions ouvertes valorisées. En 2025 : −29,49 % (304 trades, 28,95 % gagnants) ; en 2026 jusqu'au 1er octobre : −28,12 % (250 trades, 26,80 % gagnants). Frais 8 bps/côté, 365,16 $, et emprunt supposé 3 % annuel, 164,97 $, inclus. Notionnel brut moyen 2 646,60 $, soit 85,82 % du capital courant. AUC SHORT mûre sur le pool Oracle scoré : 0,5065/0,5112 ; pas d'avantage directionnel solide démontré. **Variante non retenue pour le trading.**
+
+Réparations locales documentées après deux arrêts explicites : GWRE 18 juin 2026, volume seul corrigé depuis 78 bougies SIP ; LBRDK 20/21 juillet 2026, OHLCV figés remplacés par les agrégats des 78 bougies SIP/séance, base corroborée le 17 juillet. Six lectures SQL, preuves/valeurs avant-après et amendement archivés ; modèles, scores, variables d'entrée, paramètres et SQL partagé inchangés. Aucun filtrage d'entrée d'après un prix futur absent, aucune clôture gratuite. Couverture des variables Oracle au minimum 92,18 % de l'univers complet, pool 179 fixe ; aucune modification du contrôle de couverture PAPER.
+
+Dates causales, empreintes, sélection, plafonds, J+1/open11 et PnL rapprochés indépendamment ; comptabilité quotidienne via le coordinateur déjà couvert par les 29 tests précédents. Zéro détention dans les réserves DD/Qnity/TOELY identifiées. Historique déjà exploré, univers contemporain, prix révisés, inventaire dividendes/corporate actions et emprunts/locates non exhaustivement certifiés. DD journalier de clôture, pas de parité intraday/live revendiquée. Aucun téléchargement fournisseur, entraînement, appel LLM, écriture SQL, ordre ou changement de production. Le rendement n'est pas directement comparable au test 2021–2026, dont le début et les modèles diffèrent.
+
+Rapport : `doc/ml/b_short_current_batch_20261118.md`. Archives : `artifacts/research/us_b_short_current_batch/20261118-v1`, courbe `capital-comparison.png`, bilan `final-status.json` et amendement `replay-amendment.json`.
+
+<!-- B_ANTI_SL_PARTIAL_TIMING_20261118 -->
+
+# B + anti-SL TOP10 — protection partielle, reprise progressive et nouvelles conditions ON/OFF
+
+19 novembre 2026, tests demandés après abandon du SHORT. Six comptes continus 4 000 $, 2021–1er octobre 2026, mêmes signaux annuels causaux B29 + anti-SL44 : TOP10 % Oracle H10 (179/1 790) → TOP10 LONG, score >0,50/AUC calibration ≥0,50, veto anti-SL sans remplissage. Position entière complète, entrée daily J+1 sans confirmation, SL5 %, sans TP/trailing/renforcement, open11. Risque 1,25 %, poids 20 %, vingt positions, minimum 50 $, plafond nouvelles entrées 1×/capacité margin 2× ; concentration native conservée. Sans B4/DD/facteurs/corrélation/secteurs. Frais 8 bps/côté et financement natif inclus.
+
+Quatre cas initiaux, mêmes quinze dates ON de l'observateur indépendant : taux LONG mûr récent20 vs référence120, −5 points pendant trois clôtures. Croisement liquidation totale/partie pilotée50 % et ancienne reprise (compte témoin virtuel >+5 % sur20séances/cinq clôtures)/reprise progressive (retour10positif deux clôtures → moitié du budget piloté ; cinq confirmations au-dessus d'une ancre → normal). En partiel, base ceil(N/2) conservée et reste piloté ; pas deux comptes et **pas un plafond strict de50 % d'exposition**. Protection = vol20 + régime SPY sur la seule partie pilotée.
+
+| Cas | Capital final | Rendement | DD maximal intraday | Taux gagnant des campagnes clôturées |
+| --- | ---: | ---: | ---: | ---: |
+| Témoin sans cette protection | 16 140,82 $ | +303,52 % | −34,98 % | 38,13 % |
+| Totale / ancienne sortie | 7 667,96 $ | +91,70 % | −42,19 % | 36,48 % |
+| Partielle / ancienne sortie | 7 006,97 $ | +75,17 % | −39,96 % | 36,74 % |
+| Totale / reprise progressive | 5 819,44 $ | +45,49 % | −36,43 % | 36,20 % |
+| Partielle / reprise progressive | 7 217,88 $ | +80,45 % | −37,38 % | 36,60 % |
+| Partielle / nouvelles conditions locales | 8 365,90 $ | +109,15 % | −36,83 % | 35,19 % |
+
+Sixième cas secondaire, déclaré après diagnostic historique déjà connu, sans modifier les quatre premiers : ON si DD20 du compte virtuel ≤−8 % et retour5négatif/deux clôtures ; après trois séances et retour5positif/NAV>EMA10/deux clôtures, reprise partielle ; cinq nouvelles confirmations avec retour10positif → normal, sans ancienne ancre. Nouvelle dégradation peut réactiver depuis reprise/normale. Vingt-cinq activations sur toute la période ; sur2021–2023, une seule des seize alertes précède une clôture sous−5 % dans les dix séances suivantes. Cible future séparée, diagnostic seulement, fenêtres chevauchantes et pas une preuve d'indépendance.
+
+Fin2024–mi2025 : ancienne alerte24décembre/sortie19mai ; nouvelle10décembre, reprises partielles6janvier/19mars puis rechutes12février/4avril, reprise8mai et retour normal16mai (exécutable19mai). Rendement6novembre–30juin : témoin−24,27 %, ancienne totale−23,43 %, nouvelle partielle−24,21 %. La reprise progressive avec ancienne ancre reste en PROBE du6janvier au27octobre2025. Après retour normal16mai, le nouveau cas réengage bien97,93 % du capital en moyenne sur dix séances : pas de verrou technique résiduel. Les positions et le capital antérieurs diffèrent du témoin.
+
+Diagnostics bornés distincts des replays : DD20/EMA10 et accumulation normalisée, puis croisement2×2 ; dix-huit contrôles de préfixe, pas d'optimisation des seuils, analyse croisée explicitement secondaire après inspection2024/25. Pas de sélection d'une règle à partir du seul bon calendrier visuel. **Aucune protection économique n'améliore le rendement et le DD du témoin ; variantes non retenues pour activation PAPER.** Pas d'impossibilité générale démontrée.
+
+Deux contrôles reproduisent exactement les archives (trades et équités daily/intraday, tolérance1e−8). Douze tests ciblés passent ; correction recherche de la quantité déjà stoppée à la même ouverture, anciens essais interrompus archivés puis variantes rejouées sans changer leurs paramètres. Cash/PnL/frais/financement rapprochés (<2e−10 $), ventes à l'ouverture suivante, quantités partielles et réarmement open11, covariance passée, comptes identiques avant première activation, absence de survente et plafond vingt positions vérifiés. Taux gagnant par campagne, pas par fragment. Expositions PROTECTED : ancienne totale42,45 %, ancienne partielle74,62 %, nouvelle locale58,96 % ; aucune garantie de volatilité globale20 %.
+
+Réserves : divergence connue du label première séance BIDU dans chaque cas, intraday partiel/repliOHLC, prix révisés, univers contemporain, pas de nouveau holdout. Écran supplémentaire des détentions : ALNT/QTWO18juin2026 volume daily nul malgré trades en cache ; ouvertures/extrêmes corroborés, caches68/77bougies et clôtures différentes, aucune substitution/certification exhaustive. Aucun chevauchement avec les anomalies GWRE/LBRDK de l'étude SHORT. Aucun entraînement, téléchargement, appelLLM, écritureSQL, ordre ou changement de production.
+
+Rapports : `doc/ml/b_anti_sl_partial_protection_20261118.md` et `doc/ml/b_anti_sl_protection_timing_20261118.md`. Archives : `artifacts/research/us_b_protection_partial/20261118-v1`, `artifacts/research/us_b_protection_timing/20261118-v1`, `20261118-v2-cross`, et `artifacts/research/us_b_protection_timing_replay/20261118-v1`. Ce dernier contient `completion.json`, comparaisons complètes/annuelles, exposition/reprise, diagnostics/événements et courbes `capital-comparison-all.png`, `capital-summary.png`, `activation-recovery-2024-2025.png`.
+
+<!-- B_ANTI_SL_ONE_STOP_PAUSE100_20261119 -->
+
+# B + anti-SL TOP10 — après un seul SL, pause de 100 séances par titre
+
+19 novembre 2026. Deux comptes continus 4 000 $, 2021–1er octobre2026 : témoin B+anti-SL et veto après chaque STOP/STOP_GAP effectivement exécuté dans le compte variante. Reste de la séance puis100séances NYSE suivantes bloqués, reprise possible à la101e. Stop intrabar connu à la clôture5m, gap à l'ouverture ; double contrôle préouverture/exécution, aucun futur stop du témoin utilisé. Sortie open11 sans pause ; aucun arrêt général des autres titres.
+
+**Même liste figée de8992candidats**, TOP10% OracleH10/TOP179 de1790 → TOP10 LONG B29, score>0,50/AUC calibration≥0,50 → anti-SL44, sans remplacement. Veto **après sélection**, pas un reclassement de l'univers avant Oracle ; convention annoncée pour isoler l'effet. Différent de l'ancien essai2SL/30séances→pause100 avant Oracle sur T0/B sans anti-SL. Aucun nouvel entraînement ou score ajouté.
+
+Entrée dailyJ+1, position entière complète, SL5%, aucun TP/trailing/renforcement, open11. Risque1,25%, poids20%, vingt positions, minimum50$, plafond achats1×/capacité margin2× ; contrôles natifs de concentration conservés. Sans B4/DD/régime/vol20/facteurs/corrélation/secteurs. Frais8bps/côté et financement natif inclus.
+
+| Cas | Capital final | Rendement | DD intraday | Trades clôturés | Taux gagnant | Exposition moyenne |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B + anti-SL témoin | 16 140,82 $ | +303,52 % | −34,98 % | 1 356 | 38,13 % | 84,57 % |
+| Un SL → pause100 | 4 497,60 $ | +12,44 % | −36,93 % | 807 | 35,44 % | 59,30 % |
+
+469pauses sur305titres ;6169occurrences candidat/date bloquées, pas autant de vrais trades supprimés. Baisse6novembre2024–4avril2025 réduite de−34,08%à−17,93% (DD de clôture de fenêtre−34,08/−21,41%). AGYS3→1stops, ROAD5→1, DECK/PRIM3→1 chacun, mais quantités et chronologies diffèrent après rejeu du capital. Le pire DD se déplace à22février2021–24octobre2022. En2022, témoin+48,60%contre−11,18% ; en2026jusqu'au1eroctobre+68,99%contre+6,26%.
+
+Diagnostic des occasions du témoin pendant les pauses connues de la variante :822trades,315gagnants/507perdants, soit60,93%des gagnants et60,43%des perdants ; PnL net cumulé+9957,40$. Ne pas ajouter/soustraire ce PnL au rendement du compte : capital, quantités et achats alternatifs dans la liste figée changent. **Pas de sélectivité utile démontrée ; variante non retenue dans ce protocole sans remplacement.** Aucun seuil optimisé après résultat et aucune impossibilité générale affirmée.
+
+Témoin rejoué exactement : transactions, courbes daily/intraday à1e−8 ; six tests ciblés passent. Équité/PnL/frais/financement rapprochés(<2e−10$), quantités/positions finales et vingt positions maximum, échéances101séances et absence d'achat pendant les pauses contrôlées. Réserves : labelBIDU connu dans le témoin, aucun dans les805trades qualifiés de la variante ; volume daily nul ALNT/GNRC/QTWO18juin2026, ouvertures/extrêmes corroborés dans cache5m68/78/77barres, clôtures différentes, aucun remplacement/certification indépendante. Univers contemporain, prix révisés, intraday incomplet/repliOHLC, historique déjà exploré sans nouveauholdout. Aucun entraînement, fournisseur/LLM, SQL, ordre ou changement de production.
+
+Rapport : `doc/ml/b_anti_sl_one_sl_pause100_20261119.md`. Archives : `artifacts/research/us_b_one_sl_pause/20261119-v1`, bilan `completion.json`, comparaisons complètes/annuelles et fenêtre, occasions manquées, pauses et courbe `capital-comparison-and-zoom.png`.

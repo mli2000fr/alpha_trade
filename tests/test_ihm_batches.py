@@ -160,6 +160,35 @@ def test_commands_use_force_for_immediate_runs() -> None:
     assert uninstall[-2:] == ["-TaskName", "AlphaTrade-DailyBarsSync"]
 
 
+def test_recovery_command_is_explicit_and_us_pipeline_only():
+    command=batches.build_run_command(_spec('us_pipeline'),recovery_date='2026-11-18')
+    assert command[-2:]==['-RecoverySessionDate','2026-11-18'] and '-Force' in command
+    for spec,day in [(_spec(),'2026-11-18'),(_spec('us_pipeline'),'2026-1-1'),
+                     (_spec('us_pipeline',catalog_path='batch_cn.yaml'),'2026-11-18')]:
+        with pytest.raises(ValueError):batches.build_run_command(spec,recovery_date=day)
+
+
+def test_start_recovery_rechecks_eligibility_before_starting_process(monkeypatch):
+    from service.forward_pit import us_pipeline_recovery
+    calls=[]
+    monkeypatch.setattr('ihm.services.db.get_engine',lambda:'local-db')
+    def require(engine,day):
+        assert engine=='local-db' and day=='2026-11-18'
+        calls.append('checked')
+    monkeypatch.setattr(us_pipeline_recovery,'require_recovery',require)
+    def start(**kw):
+        assert calls==['checked']
+        assert kw['command'][-2:]==['-RecoverySessionDate','2026-11-18']
+        assert 'rattrapage 2026-11-18' in kw['step_label']
+        return 'new-record'
+    monkeypatch.setattr(batches,'start_managed_run',start)
+    assert batches.start_batch(_spec('us_pipeline'),recovery_date='2026-11-18')=='new-record'
+    def unavailable(*a):raise ValueError('Market opened')
+    monkeypatch.setattr(us_pipeline_recovery,'require_recovery',unavailable)
+    with pytest.raises(ValueError,match='Market opened'):
+        batches.start_batch(_spec('us_pipeline'),recovery_date='2026-11-18')
+
+
 def test_cn_dragon_research_uses_dedicated_launcher_and_file_ledger(tmp_path: Path) -> None:
     spec = _spec(
         "cn_dragon_tiger_before_open",

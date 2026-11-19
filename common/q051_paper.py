@@ -9,16 +9,39 @@ import hashlib
 import json
 from pathlib import Path
 from datetime import date, timedelta
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_ID = 'q051_vol20_regime_v1'
 REFERENCE = ROOT / 'config/strategies/q051_vol20_regime_reference.json'
+PROFILE_FILES = {
+    PROFILE_ID: REFERENCE,
+    'q051_b_witness_v1': ROOT / 'config/strategies/q051_b_reference.json',
+    'q051_b_anti_sl_witness_v1': ROOT / 'config/strategies/q051_b_anti_sl_reference.json',
+}
+_PROFILE = ContextVar('q051_paper_profile', default=PROFILE_ID)
 
 
-def reference():
-    raw = REFERENCE.read_bytes()
+@contextmanager
+def profile_scope(profile_id):
+    """Scope one run/watcher admission; never mutate profiles of existing lots."""
+    reference(profile_id)  # Validate before entering the scope.
+    token = _PROFILE.set(profile_id)
+    try:
+        yield
+    finally:
+        _PROFILE.reset(token)
+
+
+def reference(profile_id=None):
+    profile_id = profile_id or _PROFILE.get()
+    path = REFERENCE if profile_id == PROFILE_ID else PROFILE_FILES.get(profile_id)
+    if path is None:
+        raise ValueError('Profil PAPER inconnu')
+    raw = path.read_bytes()
     result = json.loads(raw)
-    if result.get('profile_id') != PROFILE_ID or result.get('schema_version') != 1:
+    if result.get('profile_id') != profile_id or result.get('schema_version') != 1:
         raise ValueError('Profil Q051 de référence incompatible')
     if hashlib.sha256(json.dumps(result['risk'],sort_keys=True).encode()).hexdigest() != result['reference_risk_sha256']:
         raise ValueError('Paramètres de risque Q051 différents de la référence archivée')
@@ -27,7 +50,7 @@ def reference():
 
 
 def validate_frozen(value):
-    if value != reference():
+    if not isinstance(value, dict) or value != reference(value.get('profile_id')):
         raise ValueError('Contrat Q051 figé différent de la référence qualifiée')
     return value
 
@@ -36,11 +59,20 @@ def settings(raw=None):
     if raw is None:
         from common.config_loader import load_config
         raw = load_config()
-    value = (raw.get('us_pipeline') or {}).get('q051_vol20_regime') or {}
-    if not isinstance(value, dict) or type(value.get('enabled', False)) is not bool:
-        raise ValueError('us_pipeline.q051_vol20_regime.enabled : booléen requis')
+    policy = raw.get('us_pipeline') or {}
+    old = policy.get('q051_vol20_regime') or {}
+    new = policy.get('b_anti_sl_reference') or {}
+    for name, value in [('q051_vol20_regime', old), ('b_anti_sl_reference', new)]:
+        if not isinstance(value, dict) or type(value.get('enabled', False)) is not bool:
+            raise ValueError('us_pipeline.' + name + '.enabled : booléen requis')
+    if old.get('enabled') and new.get('enabled'):
+        raise ValueError('Activer un seul profil PAPER : Q051 vol20/régime ou B témoin')
+    if type(new.get('apply_anti_sl', True)) is not bool:
+        raise ValueError('us_pipeline.b_anti_sl_reference.apply_anti_sl : booléen requis')
+    value = new if new.get('enabled') else old
+    profile_id = ('q051_b_anti_sl_witness_v1' if new.get('apply_anti_sl', True) else 'q051_b_witness_v1') if new.get('enabled') else PROFILE_ID
     return dict(enabled=value.get('enabled', False), model_batch_id=value.get('model_batch_id'),
-                artifacts_dir=value.get('artifacts_dir', 'artifacts/models'))
+                artifacts_dir=value.get('artifacts_dir', 'artifacts/models'), profile_id=profile_id)
 
 
 def require_paper(account_id, mode='paper'):
@@ -59,11 +91,11 @@ def risk_config(equity):
     return RiskConfig(**values)
 
 
-def execution_config(account_id):
+def execution_config(account_id, profile_id=None):
     from common.winner_pyramiding import WinnerPyramidingConfig
     from execution_engine.config import (ExecutionConfig, LeverageConfig,
                                          TrailingStopConfig, TimeStopConfig)
-    p = reference()
+    p = reference(profile_id)
     return ExecutionConfig(broker_mode='paper', account_id=account_id, account_type='margin',
         swing_only=False, dry_run=False, entry_order_type='market', max_entry_gap_pct=0.,
         winner_pyramiding=WinnerPyramidingConfig(**p['winner']),
@@ -82,6 +114,7 @@ def pipeline_options(options, policy):
         raise ValueError('Q051 : model_batch_id H10 explicite requis')
     import uuid
     return replace(options, q051_paper_enabled=True, q051_run_id='q051-'+uuid.uuid4().hex,
+        q051_profile_id=value['profile_id'],
         ml_predict_batch_id=batch, ml_live_predict_batch_id=batch,
         ml_artifacts_dir=value['artifacts_dir'], llm_filter_enabled=False,
         llm_filter_run_id=None, options_filter_enabled=False, options_filter_run_id=None,

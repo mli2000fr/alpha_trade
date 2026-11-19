@@ -71,7 +71,8 @@ class NativeWinnerBroker:
                 validate_frozen(state['paper_strategy_profile'])
                 if self.config.broker_mode != 'paper' or state['broker_mode'] != 'paper':
                     raise ValueError('Q051 broker exclusivement PAPER')
-                order = BrokerAdapter(self.client, execution_config(state['account_id'])).submit_intent(intent)
+                order = BrokerAdapter(self.client, execution_config(state['account_id'],
+                    profile_id=state['paper_strategy_profile']['profile_id'])).submit_intent(intent)
             else:
                 order = self.broker.submit_intent(intent)
         except BrokerApiError as exc:

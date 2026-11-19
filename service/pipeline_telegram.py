@@ -269,11 +269,60 @@ def notify_risk(engine, summary, account_id):
     return _best_effort(send)
 
 
-def execution_message(summary, rows):
+def _entry_allocations(rows):
+    """One allocation per OMS request; protective sells are not new entries."""
+    entries, seen = [], set()
+    for row in rows:
+        if str(row.get('intent_role') or '').lower() not in ('entry', 'rebalance_buy'):
+            continue
+        state = str(row.get('broker_status') or row.get('request_status') or '').upper()
+        filled = _number(row.get('filled_qty')) or 0
+        rejected = state.startswith(('FAIL', 'REJECT', 'CANCEL', 'EXPIRE', 'SKIP'))
+        if rejected and filled <= 0:
+            continue
+        key = row.get('request_id') or (row['symbol'], row.get('side'), row.get('broker_order_id'))
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(dict(symbol=row['symbol'], side=row.get('side'),
+            quantity=filled if rejected else _number(row.get('target_qty')),
+            reference_price=_number(row.get('avg_fill_price') if rejected else row.get('decision_price')),
+            allocation_state='part exécutée conservée' if rejected else
+                ('ordre soumis' if row.get('broker_order_id') else 'demande non soumise'),
+            price_label='prix exécuté' if rejected else 'prix de référence'))
+    return entries
+
+
+def _allocation_lines(entries):
+    lines=[f'Titres retenus — nouvelles entrées / plans : {len(entries)}']
+    total, unknown = 0., 0
+    for row in entries:
+        qty, price = _number(row.get('quantity')), _number(row.get('reference_price'))
+        valid = qty is not None and qty > 0 and price is not None and price > 0
+        amount = _number(qty*price) if valid else None
+        valid = amount is not None
+        if valid:
+            total += amount
+        else:
+            unknown += 1
+        lines.append(f"• {row['symbol']} — {_direction(row.get('side'))} — "
+            f"{row.get('price_label', 'prix de référence')} {_fmt(price) if price is not None and price > 0 else '?'} USD — "
+            f"quantité {_fmt(qty)} — capital alloué indicatif "
+            f"{f'{amount:.2f} USD' if valid else 'indisponible'} — {row['allocation_state']}")
+    if entries:
+        lines.append(f'Capital alloué indicatif renseigné : {total:.2f} USD'
+                     + (f' ; {unknown} montant(s) indisponible(s).' if unknown else '.'))
+        lines.append('Notionnels hors frais ; les plans restent soumis à confirmation/revalidation. Prix de référence ≠ prix exécuté.')
+    else:
+        lines.append('Aucune nouvelle entrée ou plan qualifié pour ce run.')
+    return lines
+
+
+def execution_message(summary, rows, *, allocations=None):
     lines = ['12. Execution — PAPER',
              f"Séance {summary.get('trade_date') or '?'} · compte {summary['account_id']}",
              f"Run exécution {summary['run_id']} · risque {summary.get('risk_run_id')}",
-             f"État : {summary.get('status', '?')} · ordres soumis : {summary.get('submitted_orders', 0)}"
+             f"État : {summary.get('status', '?')} · ordres soumis : {summary.get('submitted_orders', summary.get('submitted', 0))}"
              f" · échecs : {summary.get('failed_orders', 0)}"]
     total, filled = 0., 0
     for row in rows:
@@ -296,6 +345,7 @@ def execution_message(summary, rows):
     elif not filled:
         lines.append('Aucune exécution confirmée à la fin de l’étape. Prix et montant exécutés encore indisponibles.')
     lines.append(f'Total brut des exécutions à prix qualifié : {total:.2f} USD (hors frais, pas un PnL).')
+    lines.extend(_allocation_lines(_entry_allocations(rows) if allocations is None else allocations))
     lines.append('Photographie de fin d’étape ; les ordres en attente peuvent être exécutés ultérieurement.')
     return '\n'.join(lines)
 
@@ -310,7 +360,7 @@ def notify_execution(engine, summary):
             raise ValueError('Run/compte exécution absent')
         with engine.connect() as conn:
             rows = conn.execute(text('''SELECT req.request_id, req.symbol, req.side,
-                req.intent_role, req.target_qty, req.status AS request_status,
+                req.intent_role, req.target_qty, req.decision_price, req.status AS request_status,
                 bo.broker_order_id, bo.normalized_status AS broker_status,
                 bo.filled_qty, bo.avg_fill_price
                 FROM execution_order_requests req
@@ -319,7 +369,26 @@ def notify_execution(engine, summary):
                 WHERE req.exec_run_id=:run AND req.account_id=:account
                 ORDER BY req.created_at, req.request_id, bo.broker_order_id'''),
                 {'run': run_id, 'account': account}).mappings().all()
-        return _deliver('12', run_id, account, execution_message(summary, rows))
+        allocations = _entry_allocations(rows)
+        # Confirmation-based Winner can publish a plan before any OMS request.
+        # Only plans newly armed by this exact run are eligible, never old plans
+        # or rejected entry requests. Their amount is explicitly an estimate.
+        plans = summary.get('winner_plans') or summary.get('plans') or []
+        requested = {r['symbol'] for r in rows if str(r.get('intent_role') or '').lower() in ('entry','rebalance_buy')}
+        pending = {p['symbol']:p for p in plans if p.get('outcome')=='PLAN_ARMED' and p.get('symbol') not in requested}
+        if pending:
+            with engine.connect() as conn:
+                targets = conn.execute(text('''SELECT symbol, side, entry_price
+                    FROM execution_targets_snapshot WHERE exec_run_id=:run
+                    AND account_id=:account AND trade_date=:day'''),
+                    {'run':run_id,'account':account,'day':summary['trade_date']}).mappings().all()
+            by_symbol = {target['symbol']: target for target in targets}
+            for symbol, plan in pending.items():
+                target = by_symbol.get(symbol, {})
+                allocations.append(dict(symbol=symbol, side=target.get('side', 'long'),
+                    quantity=plan.get('initial_quantity'), reference_price=target.get('entry_price'),
+                    allocation_state='plan Winner publié, soumission non confirmée',price_label='prix de référence'))
+        return _deliver('12', run_id, account, execution_message(summary, rows, allocations=allocations))
     return _best_effort(send)
 
 

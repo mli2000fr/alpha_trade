@@ -60,6 +60,6 @@ ML Predict crée/aligne la table **`oracle_path_anti_sl_predictions`** dans la b
 
 ## Ce qui reste distinct de la production actuelle
 
-Ce raccordement ne change pas `config.yaml`, les comptes, le batch quotidien sélectionné ni les paramètres du profil Q051 PAPER figé. Ce profil reste TOP5 avec vol20 + régime ; sélectionner un batch B+anti-SL lui ajoute le veto, sans le transformer en témoin TOP10 sans protections. La reproduction exacte de B+anti-SL témoin dans un profil quotidien dédié reste une étape séparée.
+Le raccordement initial ne changeait pas `config.yaml` et laissait Q051 PAPER enTOP5/vol20/régime. **Évolution ultérieure autorisée le18novembre :** un profil quotidien B dédié est maintenant configuré, avec TOP10LONG et sans vol20/régime. Le bloc `us_pipeline.b_anti_sl_reference` utilise le batch `model-factory-20261118172104-2f6a31` et propose `apply_anti_sl: true/false`. Le batch est encore en entraînement ; aucune entrée avant sa publication. L’ancien profil reste archivé et les campagnes existantes gardent leurs protections. Détails : `doc/ml/b_anti_sl_paper_20261118.md`.
 
 Les modèles de recherche existants ne sont pas servis automatiquement comme des batchs natifs. Réentraîner via cette option et vérifier le nouveau manifeste. Pour comparer B et B+anti-SL sans changer les poids Oracle/B, conserver le même entraînement de base et documenter le protocole de comparaison ; deux campagnes réentraînées indépendamment ne garantissent pas des poids identiques.

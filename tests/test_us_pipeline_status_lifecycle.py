@@ -63,6 +63,28 @@ def test_skipped_run_not_eligible_for_successful_recovery_gate(env,monkeypatch):
         assert conn.execute(text("SELECT COUNT(*) FROM pit_collection_runs WHERE status IN ('COMPLETED','COMPLETED_WITH_WARNINGS')")).scalar()==0
 
 
+def test_recovery_date_reaches_handler_without_changing_catalog_and_is_sealed(env,monkeypatch):
+    catalog={'us_pipeline':{'enabled':True,'provider':'local'}}
+    monkeypatch.setattr(batch,'load_batch_config',lambda *a:catalog)
+    def handler(engine,cfg,run,dry):
+        assert cfg['_manual_recovery_date']=='2026-11-18'
+        return batch.Outcome(requested=3,persisted=3,received=3,details=dict(trade_date='2026-11-18',recovery=True))
+    monkeypatch.setitem(batch.HANDLERS,'us_pipeline',handler)
+    status,_=batch.execute('us_pipeline',us_pipeline_recovery_date='2026-11-18')
+    assert status=='COMPLETED' and '_manual_recovery_date' not in catalog['us_pipeline']
+    with env.connect() as conn:
+        row=conn.execute(text('SELECT * FROM pit_collection_runs')).mappings().one()
+    assert row['finished_at'] and json.loads(row['details_json'])['trade_date']=='2026-11-18'
+
+
+def test_other_batch_cannot_use_us_recovery_before_any_database_work(env,monkeypatch):
+    monkeypatch.setattr(batch,'load_batch_config',lambda *a:{'daily_bars_sync':{'enabled':True}})
+    with pytest.raises(ValueError,match='only supported for us_pipeline'):
+        batch.execute('daily_bars_sync',us_pipeline_recovery_date='2026-11-18')
+    with env.connect() as conn:
+        assert conn.execute(text('SELECT COUNT(*) FROM pit_collection_runs')).scalar()==0
+
+
 def test_precise_orphan_repair_refuses_other_rows_or_missing_terminal_evidence():
     from scripts.research.us_pipeline_skip_reconcile import RUN_ID,START,validate
     row=dict(run_id=RUN_ID,batch_name='us_pipeline',started_at=START,status='RUNNING',finished_at=None)
