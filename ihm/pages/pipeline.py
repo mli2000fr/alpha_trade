@@ -2167,10 +2167,14 @@ def render() -> None:
         return
 
     from common.q051_paper import settings as q051_settings
-    if q051_settings()['enabled']:
-        st.info('Batch us_pipeline : Q051 volatilité 20 % + régime activé en PAPER — '
-                'TOP10 % Oracle H10 → jusqu’à 5 LONG per-symbol, SL5 %, sortie après dix séances, '
-                'sans confirmation 5 minutes. Les lancements manuels ci-dessous gardent leurs propres réglages.')
+    active_paper = q051_settings()
+    if active_paper['enabled']:
+        from common.q051_paper import reference
+        strategy = reference(active_paper['profile_id'])
+        st.info(f'Batch us_pipeline : {strategy["reference"]} activé en PAPER — '
+                f'TOP10 % Oracle H10 → jusqu’à {strategy["selection"]["long_top_n"]} LONG per-symbol, SL5 %, sortie open11. '
+                f'Anti-SL : {"activé" if strategy["selection"].get("apply_anti_sl", True) else "désactivé"}. '
+                'Les lancements manuels ci-dessous gardent leurs propres réglages.')
 
     options, live_confirmed = _build_launch_options()
     from ihm.services.pipeline_runner import path_directional_options

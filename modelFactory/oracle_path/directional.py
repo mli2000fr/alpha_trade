@@ -24,6 +24,7 @@ FEATURES = ['return_5d','return_10d','return_20d','momentum_60','rsi_14','adx_14
 DELTAS = ['return_5d','rsi_14','vol_ratio_20_60']
 INPUTS = FEATURES + [c+'_delta5' for c in DELTAS]
 SOURCE = 'oracle_path_long'
+CONFIG_READER_VERSION = 2  # v2 consumes oracle_top_fraction before constructing the frozen Settings.
 
 
 @dataclass(frozen=True)
@@ -50,9 +51,18 @@ class Settings:
                 raise ValueError('Bundle parcours : '+name+' invalide')
 
 
-def settings(horizon=None,feature_mode=None):
+def settings(horizon=None,feature_mode=None,universe_size=None):
     from common.config_loader import load_config
     values=dict((load_config().get('oracle_path') or {}).get('directional') or {})
+    fraction=values.pop('oracle_top_fraction',None)
+    if fraction is not None:
+        if type(fraction) not in (int,float) or not np.isfinite(fraction) or not 0 < fraction <= 1:
+            raise ValueError('oracle_path.directional.oracle_top_fraction : fraction dans ]0,1] requise')
+        if universe_size is not None and (type(universe_size) is not int or universe_size < 20):
+            raise ValueError('Univers entier requis pour figer le TOP Oracle en pourcentage')
+        # The UI reads enabled/horizon before it has resolved a universe.
+        # Training always supplies the complete universe and freezes the count.
+        if universe_size is not None:values['oracle_top_n']=int(np.ceil(universe_size*fraction))
     if horizon is not None:
         from . import validate_horizon
         values['horizon_sessions']=validate_horizon(horizon)

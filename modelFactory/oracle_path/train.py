@@ -375,7 +375,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     if cfg.oracle_path_directional_enabled:
         from .directional import settings
         protocol['directional_contract']=asdict(settings(horizon=horizon,
-            feature_mode=cfg.oracle_path_directional_feature_mode))
+            feature_mode=cfg.oracle_path_directional_feature_mode,universe_size=len(symbols)))
         if cfg.oracle_path_directional_feature_mode=='compact':
             protocol['directional_contract'].pop('feature_mode',None)
     if cfg.oracle_path_anti_sl_enabled:
@@ -472,7 +472,9 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
             result['directional_models']=len(directions['models'])
             result['directional_skipped']=len(directions['skipped'])
             result['directional_manifest_sha256']=digest(root/'directional/manifest.json')
-            result['directional_selection']='TOP20 Oracle -> TOP5 LONG -> risque -> Winner'
+            contract = protocol['directional_contract']
+            result['directional_selection']=(f'TOP{contract["oracle_top_n"]} Oracle -> '
+                f'TOP{contract["selected_n"]} LONG -> risque -> Winner')
         if cfg.oracle_path_anti_sl_enabled:
             from .anti_sl import train as train_anti_sl
             head=train_anti_sl(cfg,root,progress)

@@ -57,11 +57,11 @@ L’entraînement produit un manifeste et des têtes annuelles scellées. ML Pre
 
 ## Exploitation : ne pas confondre le profil actuel avec les témoins
 
-Configuration vérifiée : `us_pipeline.q051_vol20_regime.enabled=true`, batch `model-factory-20261114122842-c59bed`. Ce batch est H10/per-symbol compact24, pas B29.
+Configuration initialement vérifiée : `us_pipeline.q051_vol20_regime.enabled=true`, batch `model-factory-20261114122842-c59bed`. Ce batch est H10/per-symbol compact24, pas B29. **Cette configuration a été remplacée plus tard le18novembre par le profil B dédié ci-dessous.**
 
 Le service `service/q051_paper` prend sa sélection dans `config/strategies/q051_vol20_regime_reference.json` : TOP10%Oracle→TOP5LONG, puis budget vol20 et régimeSPY. Son risque applique réellement ces deux protections. Il est explicitement réservé au **PAPER**, pas à un compte réel. Changer seulement `model_batch_id` ne change ni TOP5 enTOP10 ni les protections ; en revanche, si le nouveau batch déclare une tête anti-SL complète, son veto est désormais automatique après ce TOP5.
 
-La prédiction native sait lire un bundleB29 et sa tête anti-SL. Pour reproduire exactement B témoin ou B+anti-SL dans le pipeline PAPER quotidien, il reste à créer des profils opérationnels explicites et versionnés : TOP10, mêmes tailles/protections que le témoin, sans vol20/régime. Il faudra vérifier les étapes10/11/12 et le watcher sur ces profils. Ne pas modifier manuellement le JSON de référence pour contourner ses empreintes.
+Le raccordement quotidien est maintenant effectué via deux profils opérationnels distincts et versionnés : `q051_b_witness_v1` et `q051_b_anti_sl_witness_v1`, TOP10, mêmes tailles/protections que le témoin, sans vol20/régime. Le bloc `us_pipeline.b_anti_sl_reference` est activé avec le batch fourni `model-factory-20261118172104-2f6a31` et `apply_anti_sl: true`. `false` choisit B sans veto pour une nouvelle sélection. Le modèle est en cours d’entraînement : pas d’entrée avant sa publication complète. Les étapes10/11/12 et le watcher sont testés hors ligne ; l’ancien JSON de référence n’est pas modifié. Guide : `doc/ml/b_anti_sl_paper_20261118.md`.
 
 ## Reproduction historique
 

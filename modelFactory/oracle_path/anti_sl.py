@@ -220,7 +220,8 @@ def score_features(root,scores,features):
     return pd.DataFrame(rows)
 
 
-def apply_filter(frame):
+def apply_filter(frame,*,filter_enabled=True):
+    if type(filter_enabled) is not bool:raise ValueError('Activation anti-SL : booléen requis')
     if not any(c in frame for c in FIELDS):return frame
     if not set(FIELDS)<=set(frame):raise ValueError('Prédictions anti-SL incomplètes ; relancer ML Predict')
     a=frame.copy();p=pd.to_numeric(a.anti_sl_probability,errors='coerce');threshold=pd.to_numeric(a.anti_sl_threshold,errors='coerce')
@@ -232,7 +233,8 @@ def apply_filter(frame):
         raise ValueError('Score/statut anti-SL invalide')
     a['selected_before_anti_sl']=a.selected.copy()
     long=a.selected&(a.side.eq('long') if 'side' in a else True)
-    a['anti_sl_rejected']=long&known&p.gt(threshold)
+    a['anti_sl_rejected']=long&known&p.gt(threshold)&filter_enabled
+    if not filter_enabled:a['anti_sl_filter_enabled']=False
     a.loc[a.anti_sl_rejected,'selected']=False
     if 'retain_long' in a:a.loc[a.anti_sl_rejected,'retain_long']=False
     if 'side' in a:a.loc[a.anti_sl_rejected,'side']='flat'

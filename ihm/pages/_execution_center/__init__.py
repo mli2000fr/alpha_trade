@@ -3560,7 +3560,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help='LightGBM/CatBoost : entraîne uniquement ce modèle. Automatique : entraîne les deux et choisit chaque fold sur la validation. Le choix est figé dans les artefacts et repris par Predict/backtest/live.')
         else:
             ml_oracle_path_backend=None
-        from modelFactory.oracle_path.directional import settings as path_directional_settings
+        from ihm.services.oracle_path_configuration import load_directional_settings as path_directional_settings
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
             value=_session_state_bool("pipeline_ml_directional_profiles_enabled",

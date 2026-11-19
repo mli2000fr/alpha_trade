@@ -10,7 +10,7 @@ ou les ordres. Ils fonctionnent depuis la page Pipeline et depuis `us_pipeline`.
 | --- | --- | --- |
 | 10 — ML Predict | Filtre GPT/DeepSeek activé, après la tentative Oracle + LLM | Fournisseur et modèle archivés, date de séance, identifiant d’analyse, titres réellement sélectionnés dans l’ordre de sélection, LONG/SHORT et note de confiance. |
 | 11 — Risk Management | Fin d’un risque US PAPER non simulé à blanc | Cibles effectivement publiées pour le run, le compte et la date exacts : symbole, LONG/SHORT, quantité cible ; motifs de rejet disponibles. Avec ou sans filtre LLM. |
-| 12 — Execution | Fin d’une exécution US PAPER non simulée à blanc | État du run, ordres soumis/échoués, détail OMS par ordre : symbole, sens de position, quantité réellement remplie, prix moyen observé et montant brut en USD. Avec ou sans filtre LLM. |
+| 12 — Execution | Fin d’une exécution US PAPER non simulée à blanc | État du run, ordres soumis/échoués, détail OMS par ordre : symbole, sens de position, quantité réellement remplie, prix moyen observé et montant brut en USD. Liste des nouvelles entrées/plans retenus : prix de référence, quantité, capital alloué indicatif et total par compte. Avec ou sans filtre LLM, y compris le parcours Q051/B + anti-SL. |
 
 Si aucun titre n’est retenu à l’étape 10, le message distingue :
 
@@ -45,6 +45,29 @@ Telegram pour un fill arrivé plus tard dans le watcher. Si le wrapper LLM évit
 l’exécution faute de sélection ou de cible risque, il envoie un message « aucun
 ordre envoyé » avec ce motif. Un échec avant la production du résumé risque ou
 exécution conserve les mécanismes d’erreur existants, pas un faux bilan réussi.
+
+### Capital alloué — évolution du 19 novembre 2026
+
+La liste des nouvelles entrées distingue le prix de référence archivé dans
+`execution_order_requests.decision_price` du prix exécuté. Le capital alloué
+indicatif vaut quantité demandée × prix de référence, hors frais ; ce n'est
+pas le capital déjà débité. La liste ne compte qu'une fois chaque demande OMS,
+exclut les stops/TP et les ordres refusés/annulés sans remplissage. Pour un ordre
+annulé après un remplissage partiel, seule la partie exécutée est retenue.
+
+Si Winner a publié un nouveau `PLAN_ARMED` sans demande OMS, la notification
+indique la quantité initiale du plan et le prix du snapshot d'exécution du même
+run/compte/séance. Le montant reste conditionnel : « plan Winner publié,
+soumission non confirmée ». Un plan préexistant n'est pas annoncé comme nouveau.
+Un prix absent reste indisponible et n'entre pas dans le total renseigné.
+Les champs `submitted_orders` et `submitted` des deux parcours sont acceptés.
+
+Exemple de ligne, avant exécution :
+
+`• ABC — LONG — prix de référence 12.5 USD — quantité 10 — capital alloué indicatif 125.00 USD — ordre soumis`
+
+Cette évolution s'applique aux prochaines notifications. Les messages déjà
+figés dans l'outbox ne sont ni réécrits ni renvoyés automatiquement.
 
 ## Configuration et fiabilité
 
