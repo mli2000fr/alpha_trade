@@ -1,4 +1,4 @@
-"""Optional manual LONG veto after Q051 ranking; no alternative sizing/exits."""
+"""Optional batch/manual LONG veto after Q051 ranking; no alternative sizing/exits."""
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
@@ -13,8 +13,10 @@ from service.llm_directional.runner import analyze, qualified_selection
 
 
 def manual_config(horizon, count):
+    """Enable via explicit batch policy or permitted manual opt-in."""
     cfg = load_filter_config()
-    if not cfg.manual_opt_in_allowed:
+    from service.forward_pit.us_pipeline import gpt_filter_enabled, load_pipeline_policy
+    if not cfg.manual_opt_in_allowed and not gpt_filter_enabled(load_pipeline_policy()):
         raise ValueError('Activation LLM manuelle interdite dans config.yaml')
     return replace(cfg, enabled=True, horizon=horizon, account_id='default',
                    oracle_top_n=max(1, count), max_selected=min(count, cfg.max_selected),

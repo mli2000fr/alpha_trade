@@ -16,11 +16,30 @@ les options déjà scellées ; elle ne reconstruit pas un ancien plan.
 Les paramètres manuels restent disponibles en décochant la case.
 [Utilisation de la page et distinction des deux modes](../guide_utilisateur/03_pipeline.md).
 
-L'option LLM manuelle du mode commun est transmise par `-Q051LlmFilter` au
-lanceur, puis `--us-pipeline-llm-filter` au runner. Elle est interdite hors
-us_pipeline, sans lancement manuel explicite ou lors d'un rattrapage.
-Le runner ajoute `_manual_q051_llm_filter` à la seule configuration du run,
-sans écrire les YAML. Cette option n'est pas présente dans les tâches planifiées.
+**Bascule GPT du batch :** `config.yaml → us_pipeline.gpt_filter_enabled` est
+le premier paramètre de la section. Il est initialisé à `false` pour préserver
+le comportement courant. `true` active le filtre après le classement LONG pour
+les nouveaux cycles B/Q051, avant le risque, avec le même horizon que le modèle.
+La page Pipeline construit ses défauts avec ce même paramètre ; ses anciens états
+de case sont resynchronisés lorsque le paramètre change. Les valeurs non booléennes
+sont rejetées. L'activation exige le parcours B/Q051 sur default PAPER et les
+étapes 10/11/12 ; les autres comptes utilisent ensuite la sélection partagée.
+
+Sans option CLI, le lanceur et le runner héritent du paramètre. Les choix manuels
+peuvent exceptionnellement surcharger sa valeur pour un nouveau lancement :
+`-Q051LlmFilter` / `--us-pipeline-llm-filter` pour `true`, ou
+`-NoQ051LlmFilter` / `--no-us-pipeline-llm-filter` pour `false`.
+Ces choix sont interdits hors us_pipeline, sans lancement manuel explicite ou
+lors d'un rattrapage. Le runner ajoute `_manual_q051_llm_filter` à la seule
+configuration du run, sans écrire les YAML. L'absence d'option (`None`) est
+distincte d'un `false` explicite. Les tâches planifiées n'ont besoin d'aucune
+réinstallation : elles relisent la configuration à leur prochain lancement.
+Le rattrapage continue à utiliser ses options et sa sélection scellées initiales.
+Validation de la bascule du batch : **733 tests passent** ; reçu
+`artifacts/operations/us_pipeline_gpt_config_20261119/tests-final.xml`.
+Les tests vérifient les deux valeurs, la synchronisation d'une session IHM
+existante, les surcharges manuelles true/false, la conservation des reprises,
+le partage entre comptes et l'absence d'appel LLM à l'ouverture de la page.
 Seule la commande de prédiction porte `--llm-filter` ; 11/12 relisent la
 sélection scellée et revalident les réponses archivées avant risque/exécution.
 Le LLM a sa propre trace liée au run Q051 et à la liste préfiltrée. Il reste

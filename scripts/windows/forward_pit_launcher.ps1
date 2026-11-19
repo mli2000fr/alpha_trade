@@ -12,7 +12,8 @@ param(
     [switch]$Force,
     [switch]$DryRun,
     [string]$RecoverySessionDate,
-    [switch]$Q051LlmFilter
+    [switch]$Q051LlmFilter,
+    [switch]$NoQ051LlmFilter
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -24,7 +25,8 @@ $configPath = if ($BatchConfigPath) { $BatchConfigPath } else { Join-Path $works
 if ($RecoverySessionDate -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -notmatch '^\d{4}-\d{2}-\d{2}$')) {
     throw 'Rattrapage réservé à us_pipeline avec une date YYYY-MM-DD.'
 }
-if ($Q051LlmFilter -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -or -not $Force)) {
+if ($Q051LlmFilter -and $NoQ051LlmFilter) { throw 'Choisir une seule option GPT explicite.' }
+if (($Q051LlmFilter -or $NoQ051LlmFilter) -and ($BatchName -ne 'us_pipeline' -or $RecoverySessionDate -or -not $Force)) {
     throw 'GPT manuel réservé à un nouveau lancement explicite us_pipeline (-Force), sans rattrapage.'
 }
 if (-not [IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $workspace $configPath }
@@ -118,6 +120,7 @@ try {
     if ($DryRun) { $runnerArguments += '--dry-run' }
     if ($RecoverySessionDate) { $runnerArguments += @('--us-pipeline-recovery-date', $RecoverySessionDate) }
     if ($Q051LlmFilter) { $runnerArguments += '--us-pipeline-llm-filter' }
+    if ($NoQ051LlmFilter) { $runnerArguments += '--no-us-pipeline-llm-filter' }
     $stdoutTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stdout_$PID.txt"
     $stderrTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stderr_$PID.txt"
     try {

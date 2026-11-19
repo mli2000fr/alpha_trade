@@ -12,6 +12,16 @@ from ihm.services.pipeline_runner import PipelineLaunchOptions
 
 
 MODE_KEY = 'pipeline_use_us_batch_defaults'
+GPT_KEY = 'pipeline_q051_manual_llm_filter'
+GPT_DEFAULT_KEY = 'pipeline_q051_gpt_config_default'
+
+
+def sync_gpt_default(state, configured):
+    """A config change updates the widget; ordinary reruns preserve explicit edits."""
+    if state.get(GPT_DEFAULT_KEY) is not configured:
+        state[GPT_KEY] = configured
+        state[GPT_DEFAULT_KEY] = configured
+    state.setdefault(GPT_KEY, configured)
 
 
 @dataclass(frozen=True)
@@ -40,10 +50,10 @@ def load_defaults(*, now=None):
     return BatchDefaults(spec, options, steps, key, others, skip)
 
 
-def launch(defaults, *, db_config, recovery_date=None, llm_filter_enabled=False):
+def launch(defaults, *, db_config, recovery_date=None, llm_filter_enabled=None):
     """Exact same launcher as Batches; no parallel approximation of 10/11/12."""
     return start_batch(defaults.spec, db_config=db_config, recovery_date=recovery_date,
-                       **({'q051_llm_filter':True} if llm_filter_enabled else {}))
+                       **({'q051_llm_filter':llm_filter_enabled} if llm_filter_enabled is not None else {}))
 
 
 def _remember(record):
@@ -84,7 +94,7 @@ def render(*, db_config, active_runs):
                  f'sortie à l’ouverture de la {winner["horizon_sessions"] + 1}e séance. '
                  f'Entrées {current["entry_time_in_force"].upper()}, sorties {current["exit_time_in_force"].upper()}.')
         st.caption('Capital réel de chaque compte pour les quantités ; profil de risque versionné commun. '
-                   'Filtre options désactivé ; GPT/DeepSeek reste facultatif ci-dessous.')
+                   'Filtre options désactivé ; GPT/DeepSeek suit le paramètre du batch ci-dessous.')
     else:
         st.caption(f'Filtre GPT/DeepSeek : {"activé" if opts.llm_filter_enabled else "désactivé"} ; '
                    f'filtre options : {"activé" if opts.options_filter_enabled else "désactivé"}.')
@@ -98,21 +108,28 @@ def render(*, db_config, active_runs):
     from service.llm_directional.config import load_filter_config
     llm_cfg = load_filter_config()
     llm_supported = opts.q051_paper_enabled and opts.account_id == 'default' and opts.execution_mode == 'paper'
-    use_llm = False
+    configured_llm = opts.llm_filter_enabled
+    use_llm = configured_llm
     if llm_supported:
-        key = 'pipeline_q051_manual_llm_filter'
+        key = GPT_KEY
+        sync_gpt_default(st.session_state, configured_llm)
         if not llm_cfg.manual_opt_in_allowed:
-            st.session_state[key] = False
+            st.session_state[key] = configured_llm
         use_llm = st.checkbox(
             f'🌐 Filtrage {llm_cfg.provider_label} — {llm_cfg.mode_label} après le classement LONG per-symbol',
-            value=False, key=key, disabled=blocked or not llm_cfg.manual_opt_in_allowed,
-            help='Option pour ce lancement manuel uniquement. Les candidats LONG sont analysés avant le risque ; aucun SHORT ni remplacement. Le batch planifié conserve sa configuration.')
+            value=configured_llm, key=key, disabled=blocked or not llm_cfg.manual_opt_in_allowed,
+            help='Défaut : config.yaml → us_pipeline.gpt_filter_enabled. Une modification ici ne vaut que pour ce lancement. Les candidats LONG sont analysés avant le risque ; aucun SHORT ni remplacement.')
+        st.caption(f'Paramètre du batch : us_pipeline.gpt_filter_enabled = {str(configured_llm).lower()}. '
+                   'Le batch planifié et le réglage initial de cette case utilisent cette valeur.')
         if not llm_cfg.manual_opt_in_allowed:
             st.caption('Activation manuelle bloquée par config.yaml → llm_directional_filter.manual_opt_in_allowed.')
         if use_llm:
             st.info(f'{llm_cfg.provider_label} analysera uniquement les candidats LONG sélectionnés, sur l’horizon du modèle. '
                     'Appels API payants uniquement au lancement. SL, quantités et sortie Winner conservés. '
                     'La sélection finale est partagée entre les comptes papier.')
+        if use_llm != configured_llm:
+            st.caption('Choix différent du batch pour ce lancement uniquement ; config.yaml reste inchangé.')
+    override_requested = use_llm != configured_llm
     if not view.spec.runnable:
         st.warning(f'Le batch us_pipeline est désactivé ou bloqué dans batch.yaml ({view.spec.status}).')
     if active_runs:
@@ -122,12 +139,13 @@ def render(*, db_config, active_runs):
                     'NON_TRADING_DAY': 'Aucune séance US à traiter aujourd’hui.'}
         st.caption(messages.get(view.skip_reason, view.skip_reason)
                    + ' Le même contrôle de calendrier que le batch reste appliqué.')
-    launch_label = (f'▶️ Lancer le pipeline — avec filtre {llm_cfg.provider_label} manuel' if use_llm
+    launch_label = (f'▶️ Lancer le pipeline — avec filtre {llm_cfg.provider_label}' if use_llm
                     else '▶️ Lancer le pipeline — configuration us_pipeline')
     if st.button(launch_label, key='pipeline_launch_us_batch_defaults',
                  type='primary', disabled=blocked or bool(view.skip_reason)):
         try:
-            record = launch(view, db_config=db_config, **({'llm_filter_enabled':True} if use_llm else {}))
+            record = launch(view, db_config=db_config,
+                            **({'llm_filter_enabled':use_llm} if override_requested else {}))
         except Exception as exc:
             st.error(f'Pipeline non lancé : {exc}')
         else:
@@ -136,7 +154,7 @@ def render(*, db_config, active_runs):
     if recovery.get('visible'):
         day = recovery['trade_date']
         if st.button(f'↩️ Rattraper la séance {day}', key='pipeline_us_defaults_recovery',
-                     disabled=blocked or not recovery.get('eligible') or use_llm):
+                     disabled=blocked or not recovery.get('eligible') or override_requested):
             try:
                 record = launch(view, db_config=db_config, recovery_date=day)
             except Exception as exc:
@@ -145,8 +163,9 @@ def render(*, db_config, active_runs):
                 _remember(record)
     if recovery.get('reason'):
         st.caption(recovery['reason'])
-    if use_llm and recovery.get('visible'):
-        st.caption('Le rattrapage conserve sa sélection scellée. Désactivez cette option pour reprendre ce run existant.')
+    if recovery.get('visible'):
+        st.caption('Le rattrapage conserve sa configuration et sa sélection initiales. '
+                   'Rétablissez la valeur configurée de la case avant de reprendre un run existant.')
     render_selection(view)
     return view.options
 
@@ -190,7 +209,7 @@ def render_selection(view):
                 names.update(llm_direction_score='Score GPT/DeepSeek /10', llm_decision='Avis LLM',
                              llm_evidence_quality='Qualité des preuves LLM', llm_blockers='Motifs LLM')
                 info = record['llm_filter']
-                st.caption(f'Filtre LLM manuel : {info.get("run_id") or "aucun candidat à analyser"} · '
+                st.caption(f'Filtre LLM : {info.get("run_id") or "aucun candidat à analyser"} · '
                            f'H{info["horizon"]} · {len(info["selected"])} retenu(s) sur {info["requested"]}.')
             st.dataframe(frame[[k for k in names if k in frame]].rename(columns=names),
                          hide_index=True, use_container_width=True)

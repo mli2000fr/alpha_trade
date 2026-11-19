@@ -80,6 +80,7 @@ oracle_backtest:
   stop_loss_pct: 0.10
 
 us_pipeline:
+  gpt_filter_enabled: true  # true = filtre GPT/DeepSeek après le classement LONG ; défaut partagé avec la page Pipeline.
   # Ancien profil PAPER : TOP10% Oracle H10 -> TOP5 LONG, score>0.50/AUC>=0.50,
   # SL5/open11, budget covariance 60 séances vol20 + SPY>0.98*SMA200.
   # Prioritaire sur options/GPT et les presets du risque pour ce batch seulement.

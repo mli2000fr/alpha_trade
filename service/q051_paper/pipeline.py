@@ -1,6 +1,6 @@
 """Scheduled Q051 10/11/12 with immutable selection and per-account admissions.
 
-No training/options filter/global profile mutation. Optional manual cloud LLM
+No training/options filter/global profile mutation. Optional batch/manual cloud LLM
 may veto ranked LONGs. Winner still owns fills, SL5 and the open11 deadline.
 """
 import argparse
@@ -353,7 +353,7 @@ def main():
     parser.add_argument('--artifacts-dir', default='artifacts/models')
     from common.q051_paper import PROFILE_FILES, PROFILE_ID, profile_scope
     parser.add_argument('--profile-id', choices=list(PROFILE_FILES), default=PROFILE_ID)
-    parser.add_argument('--llm-filter', action='store_true', help='Activation explicite pour ce predict manuel uniquement')
+    parser.add_argument('--llm-filter', action='store_true', help='Filtre LLM du batch ou choix manuel, figé pour cette sélection')
     args = parser.parse_args()
     with profile_scope(args.profile_id):
         run_stage(args)

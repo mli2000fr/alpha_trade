@@ -170,6 +170,13 @@ def options_filter_options(options, steps, *, config=None):
                    ml_live_predict_batch_id=config.default_oracle_batch_id)
 
 
+def gpt_filter_enabled(policy):
+    value = policy.get('gpt_filter_enabled', False)
+    if type(value) is not bool:
+        raise ValueError('us_pipeline.gpt_filter_enabled : booléen true/false requis')
+    return value
+
+
 def fresh_pipeline_options(cfg, policy, day, steps):
     """One fresh daily configuration for the scheduler and the Pipeline page.
 
@@ -185,15 +192,22 @@ def fresh_pipeline_options(cfg, policy, day, steps):
             raise ValueError('Q051 quotidien : inclure étape 10 pour figer une nouvelle sélection partagée')
     options = llm_options(options, steps)
     options = options_filter_options(options, steps)
-    if cfg.get('_manual_q051_llm_filter', False):
+    configured_gpt = gpt_filter_enabled(policy)
+    override = cfg.get('_manual_q051_llm_filter')
+    if override is not None and type(override) is not bool:
+        raise ValueError('Option GPT du lancement : booléen requis')
+    enabled_gpt = configured_gpt if override is None else override
+    if enabled_gpt and {s.num for s in steps}.intersection({'10', '11', '12'}):
         if not options.q051_paper_enabled or options.execution_mode != 'paper' or options.account_id != 'default':
-            raise ValueError('GPT manuel : profil Q051/B actif sur default PAPER requis')
+            raise ValueError('Filtre GPT du batch : profil Q051/B actif sur default PAPER requis')
         if not {'10', '11', '12'} <= {s.num for s in steps}:
-            raise ValueError('GPT manuel : inclure les étapes 10/11/12')
+            raise ValueError('Filtre GPT du batch : inclure les étapes 10/11/12')
         from service.llm_directional.config import load_filter_config as llm_config
-        if not llm_config().manual_opt_in_allowed:
+        if override is not None and not llm_config().manual_opt_in_allowed:
             raise ValueError('Activation LLM manuelle interdite dans config.yaml')
         options = replace(options, llm_filter_enabled=True, llm_specific_protections=False)
+    elif options.q051_paper_enabled or 'gpt_filter_enabled' in policy or override is not None:
+        options = replace(options, llm_filter_enabled=False, llm_filter_run_id=None, llm_specific_protections=False)
     return options
 
 
@@ -296,7 +310,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         from common.q051_paper import reference
         active_profile = reference(options.q051_profile_id)
         LOGGER.info('Profil %s PAPER actif : TOP10%% Oracle H10 → TOP%d LONG, SL5/open11, '
-            'plafond achats1x, sans B4/DD15 ni options ; LLM manuel=%s anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
+            'plafond achats1x, sans B4/DD15 ni options ; LLM activé=%s anti-SL=%s vol20=%s régime=%s sélection=%s modèle=%s',
             options.q051_profile_id, active_profile['selection']['long_top_n'],
             options.llm_filter_enabled,
             active_profile['selection'].get('apply_anti_sl', 'selon modèle'),

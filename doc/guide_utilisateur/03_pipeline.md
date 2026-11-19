@@ -21,19 +21,27 @@ ordres DAY. La page relit les réglages, sans conserver une copie indépendante.
 Les résultats de 10 et les décisions de 11 par compte viennent des archives
 scellées de la sélection correspondante ; ils ne prouvent pas le remplissage.
 
-**Option GPT/DeepSeek manuelle :** le mode commun propose une case supplémentaire,
-décochée par défaut, **Filtrage GPT — données locales uniquement après le
+**Filtre GPT/DeepSeek du batch et de la page :** le premier paramètre de
+`config.yaml → us_pipeline` est `gpt_filter_enabled: false`.
+`true` active le filtre pour les prochains cycles du batch ; `false` le désactive.
+Quand **Utiliser la configuration du batch us_pipeline** est coché, cette valeur
+détermine aussi le réglage initial de **Filtrage GPT — données locales uniquement après le
 classement LONG per-symbol** (le libellé suit le fournisseur/mode configuré).
-Elle ajoute un filtre à ce lancement uniquement, sans changer le batch planifié.
+Un changement de ce paramètre met à jour la case, même dans une session IHM
+existante. Une modification manuelle de la case vaut pour ce lancement uniquement,
+sans écrire le YAML, y compris pour désactiver GPT alors que le batch l'active.
 Le parcours devient Oracle → LONG per-symbol → GPT/DeepSeek → risque → Winner.
 Le LLM reçoit uniquement les candidats LONG retenus, avec l'horizon du modèle
 (H10 pour B). Il peut en retirer, sans remplacement par les rangs suivants et
 sans SHORT automatique. Les protections et le dimensionnement B restent ceux
 du profil. Cette variante n'est donc plus la sélection exacte du témoin.
 
-`llm_directional_filter.enabled: false` reste le défaut planifié ;
-`manual_opt_in_allowed: true` autorise la case manuelle. Passer ce dernier
-réglage à `false` bloque cette possibilité. Cocher la case ne lance aucun appel :
+`us_pipeline.gpt_filter_enabled` est la bascule du parcours B/Q051 ;
+`llm_directional_filter.enabled` reste celle de l'ancien parcours standard.
+`manual_opt_in_allowed: true` autorise à modifier la case dans l'écran. À `false`,
+elle reste figée sur la valeur configurée du batch : ce réglage ne désactive
+pas un filtre explicitement activé par `us_pipeline.gpt_filter_enabled`.
+Cocher la case ne lance aucun appel :
 les appels payants ont lieu seulement au lancement de l'étape10. Les réponses
 sont archivées dans les tables LLM existantes ; une réponse invalide bloque
 la publication, sans repli sur les candidats non filtrés. La sélection scellée
