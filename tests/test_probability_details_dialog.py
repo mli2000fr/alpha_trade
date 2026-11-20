@@ -43,36 +43,35 @@ def test_archived_details_require_exact_sealed_candidate_and_llm_receipt(proposa
     with pytest.raises(ValueError,match='différente'):details.load_analysis(None,report['run_id'],'B')
 
 
-@pytest.mark.parametrize('demo',[False,True])
-def test_inline_button_opens_details_periods_change_and_no_choice_is_published(proposal,monkeypatch,demo):
+def test_inline_button_opens_details_periods_change_and_no_choice_is_published(proposal,monkeypatch):
     from ihm.components import probability_selection as selection
     from service.q051_paper.human_selection import approval_path
     from streamlit.components.v2.bidi_component.main import _make_trigger_id
     folder,report,frame=proposal
     monkeypatch.setattr(selection,'_test_proposal',proposal,raising=False)
     monkeypatch.setattr('ihm.services.db.get_engine',lambda:None)
-    monkeypatch.setattr(details,'load_analysis',lambda *a:packet() if not demo else pytest.fail('Demo must not read real analyses'))
+    monkeypatch.setattr(details,'load_analysis',lambda *a:packet())
     loaded=[]
     def fetch(symbol,end,months=12):
         loaded.append((symbol,end,months));return bars(symbol,end,months)
     monkeypatch.setattr(chart,'_cached_local_symbol_bars',fetch)
     script='''
 import streamlit as st
-from ihm.components.probability_selection import render,render_demo,_test_proposal
+from ihm.components.probability_selection import render,_test_proposal
 from ihm.components.prediction_review_table import _registered_table_component
 _registered_table_component.clear()
 @st.fragment(run_every='5s')
 def panel():
-    ACTION
+    render(*_test_proposal)
 panel()
 from ihm.components.local_symbol_bars_dialog import render_pending_local_symbol_bars_dialog
 render_pending_local_symbol_bars_dialog()
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 st.session_state['test_parents']=dict(get_script_run_ctx().fragment_storage._parent_by_id)
-'''.replace('ACTION','render_demo()' if demo else 'render(*_test_proposal)')
+'''
     app=AppTest.from_string(script).run(timeout=30)
     assert not app.exception and not loaded
-    symbol='AAPL' if demo else 'B'
+    symbol='B'
     widget=app.get('bidi_component')[0]
     states=app._tree.get_widget_states()
     state=states.widgets.add();state.id=widget.proto.id
@@ -97,7 +96,7 @@ st.session_state['test_parents']=dict(get_script_run_ctx().fragment_storage._par
     # the next complete page render must not reopen a dismissed context.
     app._run(None,timeout=30)  # no stale, already-unregistered dialog widget states.
     assert not app.exception and not app.get('plotly_chart')
-    key='pipeline-gpt-probability-demo' if demo else 'probability-choice-'+report['run_id']
+    key='probability-choice-'+report['run_id']
     assert app.session_state[key+'-checked']==[symbol]
     assert not approval_path(folder).exists()
 

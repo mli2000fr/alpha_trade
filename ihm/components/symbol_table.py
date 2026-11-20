@@ -90,12 +90,13 @@ def _render_action_bar(
     table_key: str,
     extra_actions: list[ActionSpec],
     bars_lookback_days: int,
+    bars_account_id: str | None = None,
 ) -> None:
     row = df.iloc[row_index]
     columns = st.columns(1 + len(extra_actions))
     bars_button_key = f"{table_key}__bars_btn_{symbol}"
     if columns[0].button(f"📈 Voir l'historique des bars ({symbol})", key=bars_button_key, use_container_width=True):
-        show_symbol_bars_dialog(symbol, lookback_days=bars_lookback_days)
+        show_symbol_bars_dialog(symbol, lookback_days=bars_lookback_days,account_id=bars_account_id)
 
     for idx, spec in enumerate(extra_actions, start=1):
         column = columns[idx]
@@ -132,6 +133,7 @@ def render_symbol_table(
     height: int = 400,
     extra_actions: list[ActionSpec] | None = None,
     bars_lookback_days: int = 365,
+    bars_account_id: str | None = None,
     hide_index: bool = True,
 ) -> str | None:
     """Affiche un DataFrame cliquable, ouvrant une popin de bars par symbole.
@@ -183,6 +185,7 @@ def render_symbol_table(
         table_key=key,
         extra_actions=extra_actions,
         bars_lookback_days=bars_lookback_days,
+        bars_account_id=bars_account_id,
     )
     return symbol
 

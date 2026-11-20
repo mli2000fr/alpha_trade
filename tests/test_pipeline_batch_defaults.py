@@ -182,12 +182,10 @@ render_selection(load_defaults())
 '''
     app=AppTest.from_string(source).run(timeout=30)
     assert not app.exception
-    demo=json.loads(app.get('bidi_component')[0].proto.json)
-    assert [r['symbol'] for r in demo['rows']]==['AAPL','MSFT','NVDA']
     assert app.dataframe[0].value.iloc[0]['Symbole']=='EXAMPLE'
     assert app.dataframe[0].value.iloc[0]['Score Oracle']==.9
     assert app.dataframe[1].value.iloc[0]['Quantité']==4
     frame.assign(long_probability=.99).to_parquet(folder/'selection.parquet')
     app.run(timeout=30)
-    assert not app.exception and not app.dataframe  # demo component remains; altered real selection is hidden.
+    assert not app.exception and not app.dataframe  # altered real selection is hidden.
     assert any('Empreinte' in w.value for w in app.warning)

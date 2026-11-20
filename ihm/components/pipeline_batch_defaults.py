@@ -188,8 +188,6 @@ def render_selection(view):
         except (OSError, ValueError):
             continue
     with st.expander('10. ML Predict — sélection du parcours quotidien', expanded=True):
-        from ihm.components.probability_selection import render_demo
-        render_demo()
         path,record=_render_archived_prediction(matches,opts)
     from ihm.components.pipeline_batch_results import render_account_stages
     render_account_stages(view,path,record)
@@ -225,8 +223,8 @@ def _render_archived_prediction(matches,opts):
             info=record['llm_filter']
             st.caption(f'Filtre LLM : {info.get("run_id") or "aucun candidat à analyser"} · '
                        f'H{info["horizon"]} · {len(info["selected"])} évaluable(s) sur {info["requested"]}.')
-        from service.llm_directional.prompts import PROBABILITY_VERSION
-        if record.get('llm_filter',{}).get('protocol')==PROBABILITY_VERSION:
+        from service.llm_directional.prompts import probability_protocol
+        if probability_protocol(record.get('llm_filter',{}).get('protocol')):
             from ihm.components.probability_selection import render as render_probability
             render_probability(path.parent,record,frame)
         else:

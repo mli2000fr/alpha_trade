@@ -1,8 +1,10 @@
 # GPT/DeepSeek : probabilité de hausse sans toucher le SL et choix humain
 
-Le filtre du parcours Q051/B utilise désormais le protocole versionné
-`oracle-long-no-stop-probability-v10`. Les anciennes analyses de tendance
-v4–v9 et leurs prompts restent inchangés et revalidables.
+Les nouveaux appels du parcours Q051/B utilisent le protocole versionné
+`oracle-long-probabilities-v12`, avec trois estimations, analyses en français
+et horizon de court terme explicite. Les anciennes analyses v4–v11 et leurs
+prompts restent inchangés et revalidables. Ajouter ce prompt ne relance aucun
+appel payant sans lancement explicite.
 
 ## Événement demandé
 
@@ -19,6 +21,16 @@ une référence indicative, pas un remplissage garanti. La condition de hausse
 porte sur le prix brut ; ce n'est pas une probabilité de profit net après frais.
 Le pourcentage retourné est une estimation subjective non calibrée, sans
 transformation d'un ancien score 1–10 en probabilité.
+
+Les commentaires, arguments, risques, catalyseurs, analyses du consensus et
+du contexte sont demandés **en français**. Les clés JSON et codes techniques
+restent ceux du schéma ; citations exactes, titres originaux et URL ne sont
+pas traduits. Pour H10, la question concerne **dix séances boursières de
+détention**, entrée incluse, puis sortie open11. L'analyse privilégie les
+informations susceptibles d'agir dans cette fenêtre. Les objectifs d'analystes
+à douze mois et les perspectives annuelles servent de contexte : ils ne sont
+jamais convertis en probabilité de hausse à dix séances. L'horizon effectivement
+fourni par le contrat reste impératif pour les éventuels autres profils.
 
 ## Données locales et recherche Web
 
@@ -45,14 +57,57 @@ suffisantes permettent une estimation.
 
 Fichiers des nouveaux prompts :
 
-- `config/ia/prompt/cloud/oracle_directional/v10/web_search.txt` ;
-- `config/ia/prompt/cloud/oracle_directional/output/v10.txt`.
+- `config/ia/prompt/cloud/oracle_directional/v11/web_search.txt` ;
+- `config/ia/prompt/cloud/oracle_directional/output/v11.txt`.
+
+Les deux fichiers v10 sont conservés pour reproduire les requêtes archivées.
+Le contrôle v11 compte **155 tests réussis**, dont français/court terme pour
+GPT et DeepSeek, horizons transmis sans remplacement, archivage/relecture SQL,
+et empreintes identiques des requêtes v10. Reçu :
+`artifacts/operations/llm_probability_20261120/tests-fr-v11-final.xml`.
+L'analyse réelle `llm-d15e1538e26b400d87b025faa44528af` a aussi été revalidée
+en lecture seule avec son contrat v10 : aucune réponse réécrite et aucun
+nouvel appel fournisseur.
 
 Une citation Web doit appartenir aux résultats réellement reçus. Les dates,
 fraîcheur et citations locales restent contrôlées ; les dates Web sont des
 dates déclarées par les sources, pas une certification historique universelle.
 
 ## Validation dans la page Pipeline
+
+### Trois probabilités distinctes — protocole v12
+
+Les nouvelles analyses GPT/DeepSeek renvoient désormais, en français :
+
+| Champ JSON | Événement estimé |
+| --- | --- |
+| `probability_up_without_stop` | Sortie à open(H+1) au-dessus du prix d'achat ET aucune touche du SL auparavant. |
+| `probability_stop_touch` | Au moins une touche du SL fixe avant la sortie, gaps compris. |
+| `probability_positive_exit` | Prix à open(H+1) supérieur au prix d'achat, dans le parcours hypothétique même si un SL aurait déjà fermé la position. |
+
+Le même prix d'entrée réel encore inconnu, le même horizon et le même SL
+s'appliquent aux trois événements. La hausse finale ne désigne ni un pic
+temporaire ni un trade effectivement encore ouvert après un stop.
+Les deux marginales peuvent se recouvrir : elles ne s'additionnent pas à 100 %,
+et le complément de la conjointe n'est pas le risque de SL. Le parseur impose
+`max(0, hausse - SL) <= conjointe <= min(hausse, 1 - SL)` pour les valeurs
+disponibles, sans supposer l'indépendance ni inventer une valeur absente.
+Chaque marginale peut rester `null`, avec son explication ; le champ
+`probability_status` conserve son sens historique pour la conjointe.
+
+Le tableau montre **Hausse sans SL (%)**, **Touche du SL (%)** et
+**Hausse à la sortie (%)**. Le tri et la sélection humaine restent fondés sur
+la conjointe qualifiée. La fenêtre de détail affiche les trois valeurs et
+leurs explications séparées. Les réponses v10/v11 restent revalidables,
+avec « — » pour les nouvelles valeurs absentes ; leurs textes, schémas et
+requêtes sont inchangés. Les deux probabilités supplémentaires ne sont jamais
+déduites de `1 - probability_up_without_stop`.
+
+Les réponses complètes restent dans les JSON des tables LLM existantes ;
+les colonnes dérivées sont ajoutées au parquet scellé de la nouvelle sélection.
+Aucune migration SQL ni réécriture des anciennes réponses n'est nécessaire.
+Les contrôles de preuve, d'expiration, de choix humain et de risque restent
+applicables ; une probabilité élevée ne les remplace pas.
 
 Le tableau de l'étape10 affiche les candidats par probabilité décroissante,
 avec une case **Retenir** par ligne, les explications et les limites des preuves.
@@ -71,13 +126,28 @@ explications de probabilité, preuves, arguments favorables/défavorables,
 consensus, contexte, catalyseurs, risques et sources. La consultation conserve
 les cases cochées ; elle n'approuve aucun titre et ne déclenche aucun nouvel
 appel fournisseur. Si les barres sont absentes, l'analyse reste consultable.
-Un encart **Aperçu simulé — 3 réponses GPT fictives** montre le même tableau
-avec des valeurs illustratives AAPL/MSFT/NVDA. Ce mode reste uniquement en
-mémoire : son bouton ne publie aucune validation, ne contacte ni SQL ni le
-fournisseur et ne débloque aucun workflow. Fermer l'encart pour le masquer.
-Les cases sont initialement décochées. Une estimation absente ou des preuves
-non qualifiées ne peuvent pas être sélectionnées côté serveur, même si la
-case a été cochée. Aucun titre hors de la liste per-symbol n'est ajouté.
+Les cases sont initialement décochées. Une estimation absente ou invalide,
+une identité non confirmée ou un autre contrôle obligatoire en échec restent
+interdits. Aucun titre hors de la liste per-symbol n'est ajouté.
+La qualification des preuves peut être exigée ou laissée au choix humain via
+`config.yaml → us_pipeline.gpt_require_qualified_evidence_for_manual_selection`.
+Cette option vaut **false** à la demande de l'utilisateur : un candidat avec
+estimation valide peut être choisi malgré des preuves partielles. Sa qualité
+et ses réserves restent affichées. Si la clé est absente, le défaut est strict
+(`true`) ; une valeur qui n'est pas booléenne est refusée.
+
+Une nouvelle validation de schéma2 archive la politique choisie et les réserves
+de preuve explicitement acceptées, sans modifier le rapport, le parquet ni les
+réponses LLM originaux. Les anciennes validations de schéma1 restent strictes.
+Le risque et l'exécution utilisent la liste humaine figée et l'empreinte de sa
+validation ; changer la politique globale après validation ne change pas ce
+choix archivé. Les contrôles techniques de réponse, modèle, horizon/SL,
+intégrité et expiration restent applicables, ainsi que les limites de risque.
+
+Un choix interdit est refusé explicitement avec ses symboles avant la
+revalidation SQL. Ce message est conservé malgré le rafraîchissement du bloc ;
+un indicateur signale la revalidation des preuves lors d'un choix admissible.
+Valider une liste vide permet de terminer sans achat.
 
 Le bouton **Valider la sélection** publie un choix immuable lié à la proposition
 exacte et aux preuves LLM. La liste est classée par probabilité ; elle sert

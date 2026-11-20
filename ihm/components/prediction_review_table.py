@@ -1,5 +1,6 @@
 """Read-only review table with a real per-row Graphique button (no DOM hacks)."""
 from datetime import date, datetime
+import hashlib
 import math
 
 import pandas as pd
@@ -89,15 +90,18 @@ export default function(component) {
 """
 
 @st.cache_resource
-def _registered_table_component():
+def _registered_table_component(js=JS,css=CSS):
     # Register once in the active app runtime, not during a bare-module import.
-    return component('prediction_review_with_graphs',
+    # Include frontend contents in both caches: a running app may otherwise keep
+    # the old read-only renderer after checkbox support is deployed.
+    version=hashlib.sha256((js+'\0'+css).encode('utf-8')).hexdigest()[:12]
+    return component('prediction_review_with_graphs_'+version,
         html='<div class="review-table-root" role="region" aria-label="Tableau de résultats et graphiques" tabindex="0"></div>',
-        css=CSS,js=JS,isolate_styles=True)
+        css=css,js=js,isolate_styles=True)
 
 
 def _table_component(**kwargs):
-    return _registered_table_component()(**kwargs)
+    return _registered_table_component(JS,CSS)(**kwargs)
 
 
 def _cell(value, column):

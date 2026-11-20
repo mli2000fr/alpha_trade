@@ -93,7 +93,7 @@ def _parse_web_response(response, symbol, config, observed_at, *, response_schem
     validate(result, response_schema or SCHEMA)
     if probability_mode:
         from .probability import normalize
-        normalize(result)
+        normalize(result,breakdown='probability_stop_touch' in response_schema['properties'])
     if score_mode:
         from .direction_score import apply_score
         apply_score(result, config, separated=separated)
@@ -228,8 +228,8 @@ def parse_response(response, symbol, config, observed_at, context=None):
     version=context.get('analysis_protocol') if context else None
     score_mode=score_protocol(version)
     separated=version==TREND_EVIDENCE_VERSION
-    from .prompts import PROBABILITY_VERSION
-    probability_mode=version==PROBABILITY_VERSION
+    from .prompts import probability_protocol
+    probability_mode=probability_protocol(version)
     if probability_mode and (config.analysis_mode!='web_search' or config.scoring_mode!='long_without_stop_probability'):
         raise ValueError('La probabilité sans SL exige son protocole et une recherche Web réelle')
     if score_mode and config.scoring_mode!='direction_1_10':

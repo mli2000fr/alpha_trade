@@ -1530,8 +1530,6 @@ def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
     from zoneinfo import ZoneInfo
 
     st.markdown('#### TOP Oracle — avis GPT / DeepSeek')
-    from ihm.components.probability_selection import render_demo
-    render_demo(key='pipeline-custom-gpt-probability-demo')
     batch = (options.ml_predict_batch_id or options.ml_live_predict_batch_id
              or st.session_state.get('pipeline_ml_live_predict_batch_id_ml_predict'))
     if not batch:

@@ -3,12 +3,47 @@ from copy import deepcopy
 from datetime import UTC, datetime
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import tempfile
 import time
 
 LOG=logging.getLogger(__name__)
+
+EVIDENCE_BLOCKERS=frozenset({'insufficient_fresh_sources','excluded_untraceable_sources',
+    'excluded_untraceable_local_sources','insufficient_qualified_local_sources',
+    'evidence_partial','evidence_insufficient'})
+
+
+def selection_policy():
+    from common.config_loader import load_config
+    value=(load_config().get('us_pipeline') or {}).get('gpt_require_qualified_evidence_for_manual_selection',True)
+    if type(value) is not bool:raise ValueError('gpt_require_qualified_evidence_for_manual_selection : booléen requis')
+    return dict(require_qualified_evidence=value)
+
+
+def selectable_symbols(frame,policy):
+    """Relax evidence only; unknown blockers and missing estimates remain blocked."""
+    if set(policy)!={'require_qualified_evidence'} or type(policy['require_qualified_evidence']) is not bool:
+        raise ValueError('Politique de sélection manuelle incompatible')
+    if policy['require_qualified_evidence']:return set(frame.loc[frame.selected,'symbol'])
+    allowed=set(frame.loc[frame.selected,'symbol'])
+    for row in frame.loc[frame.selected_before_llm].to_dict('records'):
+        p=row.get('llm_probability_up_without_stop')
+        blockers=row.get('llm_blockers')
+        if (type(p) not in (int,float) or not math.isfinite(p) or not 0<=p<=1
+                or not isinstance(blockers,str)):
+            continue
+        reasons={v.strip() for v in blockers.split(',') if v.strip()}
+        if reasons<=EVIDENCE_BLOCKERS:allowed.add(row['symbol'])
+    return allowed
+
+
+def evidence_overrides(frame,symbols):
+    return [dict(symbol=r['symbol'],evidence_quality=r.get('llm_evidence_quality'),
+                 blockers=r.get('llm_blockers')) for r in frame.sort_values('symbol').to_dict('records')
+            if r['symbol'] in symbols and not r['selected']]
 
 
 def required(report):
@@ -40,8 +75,21 @@ def read(folder,report,frame,*,now=None):
     except (KeyError,TypeError):
         raise ValueError('Horodatage de validation humaine absent ou invalide') from None
     selected=value.get('selected_symbols')
-    eligible=set(frame.loc[frame.selected,'symbol'])
-    if (value.get('schema_version')!=1 or value.get('action')!='EXPLICIT_UI_VALIDATION'
+    if not isinstance(selected,list) or any(not isinstance(s,str) for s in selected):
+        raise ValueError('Liste de la validation humaine incompatible')
+    version=value.get('schema_version')
+    if version==1:
+        if 'selection_policy' in value or 'evidence_overrides' in value:
+            raise ValueError('Ancienne validation modifiée avec une nouvelle politique')
+        policy=dict(require_qualified_evidence=True)
+    elif version==2:
+        policy=value.get('selection_policy')
+        if not isinstance(policy,dict):raise ValueError('Politique de validation absente')
+        if value.get('evidence_overrides')!=evidence_overrides(frame,selected or []):
+            raise ValueError('Dérogations de la validation humaine incompatibles avec la proposition')
+    else:raise ValueError('Version de validation humaine incompatible')
+    eligible=selectable_symbols(frame,policy)
+    if (value.get('action')!='EXPLICIT_UI_VALIDATION'
             or value.get('account_scope')!='SHARED_PAPER_SELECTION' or value.get('run_id')!=report['run_id']
             or value.get('report_sha256')!=digest(Path(folder)/'selection.json')
             or value.get('selection_sha256')!=digest(Path(folder)/'selection.parquet')
@@ -67,10 +115,13 @@ def effective(folder,report,frame):
     updated['human_selection_sha256']=digest(approval_path(folder))
     updated['llm_filter']['eligible_before_human']=report['llm_filter']['selected']
     updated['llm_filter']['selected']=symbols
+    updated['llm_filter']['manual_selection_policy']=value.get('selection_policy',dict(require_qualified_evidence=True))
+    updated['llm_filter']['evidence_overrides']=value.get('evidence_overrides',[])
     return updated,ranked
 
 
-def approve(engine,run_id,symbols):
+def validate_choice(engine,run_id,symbols,*,policy=None):
+    """Read-only qualification of a proposed subset; never publishes approval."""
     from common.q051_paper import profile_scope,settings
     from .pipeline import directory,qualified,digest
     folder=directory(run_id)
@@ -83,11 +134,20 @@ def approve(engine,run_id,symbols):
     if not required(report):raise ValueError('Cette sélection ne demande pas de validation humaine')
     check_expiry(report)
     frame=pd.read_parquet(folder/'selection.parquet')
+    policy=selection_policy() if policy is None else policy
     if (not isinstance(symbols,list) or any(not isinstance(s,str) for s in symbols)
-            or len(set(symbols))!=len(symbols) or not set(symbols).issubset(set(frame.loc[frame.selected,'symbol']))):
-        raise ValueError('Choisir uniquement des candidats dont la probabilité et les preuves sont qualifiées')
+            or len(set(symbols))!=len(symbols) or not set(symbols).issubset(selectable_symbols(frame,policy))):
+        raise ValueError('Choisir uniquement des candidats avec probabilité valide et contrôles requis qualifiés')
     ordered=frame[frame.symbol.isin(symbols)].sort_values(['llm_probability_up_without_stop','oracle_rank'],ascending=[False,True]).symbol.tolist()
-    value=dict(schema_version=1,run_id=run_id,selected_symbols=ordered,
+    return folder,report,frame,ordered
+
+
+def approve(engine,run_id,symbols):
+    from .pipeline import digest
+    policy=selection_policy()
+    folder,report,frame,ordered=validate_choice(engine,run_id,symbols,policy=policy)
+    value=dict(schema_version=2,run_id=run_id,selected_symbols=ordered,
+               selection_policy=policy,evidence_overrides=evidence_overrides(frame,ordered),
                report_sha256=digest(folder/'selection.json'),selection_sha256=digest(folder/'selection.parquet'),
                llm_input_sha256=report['llm_filter']['input_sha256'],approved_at=datetime.now(UTC).isoformat(),
                action='EXPLICIT_UI_VALIDATION',account_scope='SHARED_PAPER_SELECTION')

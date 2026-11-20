@@ -14,6 +14,7 @@ from common.q051_paper import reference
 
 @pytest.fixture
 def proposal(tmp_path,monkeypatch):
+    monkeypatch.setattr(human,'selection_policy',lambda:dict(require_qualified_evidence=True))
     monkeypatch.setattr(p,'ARTIFACTS',tmp_path)
     run='q051-'+'a'*32;folder=tmp_path/run;folder.mkdir()
     frame=pd.DataFrame(dict(symbol=['A','B','C'],rank=[1,2,3],oracle_rank=[1,2,3],
@@ -67,6 +68,34 @@ def test_empty_human_selection_explicitly_cancels_all_entries(proposal):
     human.approve(None,report['run_id'],[])
     updated,effective=human.effective(folder,report,frame)
     assert updated['selected']==[] and not effective.selected.any()
+
+
+def test_read_only_choice_validation_does_not_publish_or_resume(proposal):
+    folder,report,frame=proposal
+    _,_,_,ordered=human.validate_choice(None,report['run_id'],['A','B'])
+    assert ordered==['B','A']
+    assert human.validate_choice(None,report['run_id'],[])[-1]==[]
+    with pytest.raises(ValueError,match='qualifiés'):
+        human.validate_choice(None,report['run_id'],['C'])
+    assert not human.approval_path(folder).exists() and not (folder/'accounts').exists()
+
+
+def test_ui_explains_rejected_symbols_and_keeps_error_after_automatic_refresh(proposal,monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from ihm.components import probability_selection as ui,prediction_review_table as table
+    folder,report,frame=proposal
+    monkeypatch.setattr(ui,'_test_proposal',proposal,raising=False)
+    monkeypatch.setattr(table,'_table_component',lambda **kw:SimpleNamespace(selected_symbols=['C']))
+    monkeypatch.setattr('ihm.services.db.get_engine',lambda:pytest.fail('No SQL qualification for an already unqualified checkbox'))
+    app=AppTest.from_string('''
+from ihm.components.probability_selection import render,_test_proposal
+render(*_test_proposal)
+''').run(timeout=30)
+    next(b for b in app.button if b.label=='Valider la sélection').click().run(timeout=30)
+    assert not app.exception and any('preuves non qualifiées pour C' in e.value for e in app.error)
+    app.run(timeout=30)
+    assert not app.exception and any('étapes 11/12 restent en attente' in e.value for e in app.error)
+    assert not human.approval_path(folder).exists() and not (folder/'accounts').exists()
 
 
 def test_expired_or_tampered_approval_is_not_reused(proposal):
@@ -147,52 +176,28 @@ _registered_table_component.clear()
 render_selection(load_defaults())
 ''').run(timeout=30)
     assert not app.exception
-    data=json.loads(app.get('bidi_component')[1].proto.json)
+    data=json.loads(app.get('bidi_component')[0].proto.json)
     assert [r['symbol'] for r in data['rows']]==['B','A','C']
     assert any('TOP Oracle — avis GPT / DeepSeek' in m.value for m in app.markdown)
     assert any('Validation possible jusqu’au' in c.value for c in app.caption)
     assert not human.approval_path(folder).exists()
 
 
-def test_demo_validation_never_publishes_real_approval_or_connects_to_sql(proposal,monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    folder,_,_=proposal
-    monkeypatch.setattr(human,'approve',lambda *a,**kw:pytest.fail('Demo must never approve a real run'))
-    monkeypatch.setattr('ihm.services.db.get_engine',lambda:pytest.fail('Demo must never access SQL'))
-    app=AppTest.from_string('''
-from ihm.components.probability_selection import render_demo
-from ihm.components.prediction_review_table import _registered_table_component
-_registered_table_component.clear()
-render_demo()
-''').run(timeout=30)
-    assert not app.exception
-    payload=json.loads(app.get('bidi_component')[0].proto.json)
-    assert [r['symbol'] for r in payload['rows']]==['AAPL','MSFT','NVDA']
-    assert [r['cells'][3]['sort'] for r in payload['rows'][:2]]==pytest.approx([72.,58.])
-    assert payload['rows'][2]['cells'][3]['sort'] is None and payload['selected_symbols']==[]
-    assert any('DÉMONSTRATION' in w.value for w in app.warning)
-    states=app._tree.get_widget_states()
-    event=states.widgets.add();event.id=app.get('bidi_component')[0].proto.id
-    event.json_value=json.dumps({'selected_symbols':['AAPL','NVDA']})
-    app._run(states,timeout=30)
-    next(b for b in app.button if b.label=='Valider la sélection').click().run(timeout=30)
-    assert not app.exception and any('Aucun choix réel enregistré' in v.value for v in app.info)
-    assert any('choix : AAPL.' in v.value for v in app.info)
-    assert any('Exclus de la simulation' in v.value and 'NVDA' in v.value for v in app.warning)
-    assert not human.approval_path(folder).exists() and not (folder/'accounts').exists()
-
-
-def test_human_subset_is_bound_into_real_risk_and_execution(tmp_path,monkeypatch):
+@pytest.mark.parametrize('waive_evidence',[False,True])
+def test_human_subset_is_bound_into_real_risk_and_execution(tmp_path,monkeypatch,waive_evidence):
     from tests.test_q051_paper_profile import risk_fixture
     from datetime import date
     module,engine,repo,broker,folder,_=risk_fixture(tmp_path,monkeypatch)
     run='q051-'+'b'*32
     frame=pd.read_parquet(folder/'selection.parquet').assign(oracle_rank=1,selected_before_llm=True,
         llm_probability_up_without_stop=.7)
+    if waive_evidence:
+        frame=frame.assign(selected=False,llm_evidence_quality='PARTIAL',llm_blockers='evidence_partial')
+    monkeypatch.setattr(human,'selection_policy',lambda:dict(require_qualified_evidence=not waive_evidence))
     frame.to_parquet(folder/'selection.parquet')
     report=dict(run_id=run,strategy_profile=reference()['profile_id'],batch_id='batch',trade_date='2026-10-16',
-        selected=['TEST'],selection_sha256=p.digest(folder/'selection.parquet'),
-        llm_filter=dict(approval_required=True,input_sha256='input',selected=['TEST'],
+        selected=[] if waive_evidence else ['TEST'],selection_sha256=p.digest(folder/'selection.parquet'),
+        llm_filter=dict(approval_required=True,input_sha256='input',selected=[] if waive_evidence else ['TEST'],
                        approval_expires_at=(datetime.now(UTC)+timedelta(hours=1)).isoformat()))
     (folder/'selection.json').write_text(json.dumps(report))
     monkeypatch.setattr(p,'directory',lambda run_id:folder)
@@ -220,6 +225,8 @@ def test_probability_adapter_proposes_all_qualified_candidates_for_review(monkey
     monkeypatch.setattr('service.pipeline_telegram.notify_llm',lambda *a,**kw:None)
     raw=dict(completed_at=datetime.now(UTC),input_sha256='hash')
     items=[dict(symbol=s,assessment_json=json.dumps(dict(probability_up_without_stop=p,
+        probability_stop_touch=.1,probability_positive_exit=.9,
+        stop_touch_explanation='Risque de stop.',positive_exit_explanation='Hausse finale.',
         probability_explanation='Joint event',evidence_quality='SUFFICIENT',selection_blockers=[])))
         for s,p in [('A',.6),('B',.8)]]
     monkeypatch.setattr(module,'qualified_selection',lambda *a,**k:(raw,[dict(symbol='A'),dict(symbol='B')]))
@@ -228,5 +235,8 @@ def test_probability_adapter_proposes_all_qualified_candidates_for_review(monkey
     frame,receipt=module.apply(None,ranked,run_id='q051-parent',batch='batch',day=__import__('datetime').date(2026,11,19),horizon=10)
     assert receipt['approval_required'] and frame.selected.all()
     assert receipt['contract']['stop_loss_pct']==.05 and receipt['contract']['exit_session']==11
-    assert all(c['analysis_protocol']==PROBABILITY_VERSION for c in calls[0]['inputs'])
+    from service.llm_directional.prompts import PROBABILITY_BREAKDOWN_VERSION
+    assert all(c['analysis_protocol']==PROBABILITY_BREAKDOWN_VERSION and c['analysis_language']=='fr' for c in calls[0]['inputs'])
     assert frame.llm_probability_up_without_stop.tolist()==[.6,.8]
+    assert frame.llm_probability_stop_touch.tolist()==[.1,.1]
+    assert frame.llm_probability_positive_exit.tolist()==[.9,.9]

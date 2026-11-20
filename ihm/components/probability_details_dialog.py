@@ -51,10 +51,17 @@ def load_analysis(engine,run_id,symbol):
 def render_analysis(packet):
     value=packet['assessment']
     st.subheader('Analyse GPT / DeepSeek détaillée')
-    p=value.get('probability_up_without_stop')
-    st.metric('Probabilité estimée de hausse sans toucher le SL','Indéterminable' if p is None else f'{p:.1%}')
+    for field,label in [('probability_up_without_stop','Hausse sans toucher le SL'),
+                        ('probability_stop_touch','Toucher le SL avant la sortie'),
+                        ('probability_positive_exit','Hausse à la sortie, même après une touche du SL')]:
+        p=value.get(field)
+        st.metric(label,'Non disponible' if p is None else f'{p:.1%}')
+    st.caption('Ces probabilités se recouvrent et ne totalisent pas 100 %. La hausse finale est '
+               'hypothétique si le stop aurait déjà fermé la position.')
     st.caption('Estimation non calibrée · preuves : '+str(value.get('evidence_quality','indisponibles')))
     for field,label in [('probability_explanation','Explication de la probabilité'),
+                        ('stop_touch_explanation','Explication du risque de toucher le SL'),
+                        ('positive_exit_explanation','Explication de la hausse finale hypothétique'),
                         ('evidence_explanation','Qualité et limites des preuves'),
                         ('bull_case','Éléments favorables'),('bear_case','Éléments défavorables'),
                         ('consensus_analysis','Consensus et attentes du marché'),
@@ -84,16 +91,12 @@ def render_analysis(packet):
 def render_body(context):
     symbol=context['symbol']
     st.subheader(symbol+' — courbe et analyse')
-    if context.get('demo'):
-        st.warning('DÉMONSTRATION : analyse et probabilités fictives. Le graphique utilise uniquement les barres réelles déjà en base.')
-        packet=context
-    else:
-        try:
-            from ihm.services.db import get_engine
-            packet=load_analysis(get_engine(),context['run_id'],symbol)
-        except Exception:
-            packet=None
-            st.warning('Analyse archivée indisponible ou incompatible ; aucune ancienne réponse substituée.')
+    try:
+        from ihm.services.db import get_engine
+        packet=load_analysis(get_engine(),context['run_id'],symbol)
+    except Exception:
+        packet=None
+        st.warning('Analyse archivée indisponible ou incompatible ; aucune ancienne réponse substituée.')
     from ihm.components.local_symbol_bars_dialog import _render_local_bars_section
     _render_local_bars_section(symbol,packet['trade_date'] if packet else context['trade_date'])
     if packet:render_analysis(packet)

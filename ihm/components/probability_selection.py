@@ -9,6 +9,8 @@ def _choice_table(candidates,key,*,details=None,read_only=False):
     import pandas as pd
     rows=pd.DataFrame(dict(Retenir=False,Symbole=candidates.symbol,
         Probabilite=candidates.llm_probability_up_without_stop*100,
+        ToucheSL=candidates.get('llm_probability_stop_touch',pd.Series(index=candidates.index,dtype=float))*100,
+        HausseFinale=candidates.get('llm_probability_positive_exit',pd.Series(index=candidates.index,dtype=float))*100,
         Preuves=candidates.llm_evidence_quality,Analyse=candidates.llm_explanation,
         Motifs=candidates.llm_blockers,Eligible=candidates.selected))
     from ihm.components.prediction_review_table import table_payload,_table_component
@@ -19,11 +21,12 @@ def _choice_table(candidates,key,*,details=None,read_only=False):
         if column['key']=='Retenir':column['checkbox']=True
         if column['action']:
             column.update(label='Courbe et analyse',title='Afficher la courbe et l’analyse GPT détaillée')
-        if column['key']=='Probabilite':column['label']='Probabilité estimée (%)'
+        labels={'Probabilite':'Hausse sans SL (%)','ToucheSL':'Touche du SL (%)','HausseFinale':'Hausse à la sortie (%)'}
+        if column['key'] in labels:column['label']=labels[column['key']]
         if column['key']=='Eligible':column['label']='Preuves qualifiées'
     for row in payload['rows']:
         for column,cell in zip(payload['columns'],row['cells']):
-            if column['key']=='Probabilite' and cell['sort'] is not None:
+            if column['key'] in labels and cell['sort'] is not None:
                 cell['text']=f'{cell["sort"]:.1f} %'
     payload.update(selected_symbols=checked,read_only=read_only)
     result=_table_component(key=key+'-details-v1',data=payload,
@@ -36,65 +39,28 @@ def _choice_table(candidates,key,*,details=None,read_only=False):
     if details is not None and isinstance(symbol,str) and symbol in set(candidates.symbol):
         from ihm.components.probability_details_dialog import request
         context=dict(details)
-        if context.get('demo'):
-            source=candidates[candidates.symbol==symbol].iloc[0]
-            context['assessment']=dict(probability_up_without_stop=None if pd.isna(source.llm_probability_up_without_stop)
-                else float(source.llm_probability_up_without_stop),evidence_quality=source.llm_evidence_quality,
-                probability_explanation=source.llm_explanation,
-                evidence_explanation='Exemple fictif ; aucune recherche Web effectuée.',
-                bull_case='Exemple fictif : un élément favorable serait une amélioration des perspectives confirmée par des sources datées.',
-                bear_case='Exemple fictif : une annonce décevante ou un retournement du marché pourrait invalider le scénario.',
-                consensus_analysis='Aucun consensus réel utilisé dans cette démonstration.',
-                context_analysis='Exemple de lecture du contexte ; aucune donnée financière fictive n’est présentée comme réelle.',
-                risk_factors=['Exemple fictif : risque de gap et de toucher le SL.'],
-                selection_blockers=source.llm_blockers.split(', ') if source.llm_blockers else [])
         request(symbol,context)
     rows['Retenir']=rows.Symbole.isin(chosen)
     confirmed=st.button('Valider la sélection',type='primary',key=key+'-confirm') if not read_only else False
     return rows,confirmed
 
 
-def render_demo(*,key='pipeline-gpt-probability-demo'):
-    """In-memory illustrative responses, entirely outside the trading path."""
-    import pandas as pd
-    with st.expander('Aperçu simulé — 3 réponses GPT fictives',expanded=True):
-        st.markdown('#### TOP Oracle — avis GPT / DeepSeek')
-        st.warning('DÉMONSTRATION : symboles et pourcentages illustratifs, aucun avis GPT réel. '
-                   'Les cases et le bouton ci-dessous ne transmettent rien au risque ou au broker.')
-        st.caption('Exemple H10 / SL5 % / sortie open11 : finir au-dessus du prix d’entrée sans toucher le stop. '
-                   'Tri par probabilité décroissante ; indéterminable en fin de tableau.')
-        candidates=pd.DataFrame(dict(symbol=['AAPL','MSFT','NVDA'],
-            llm_probability_up_without_stop=[.72,.58,None],
-            llm_evidence_quality=['SUFFICIENT','SUFFICIENT','INSUFFICIENT'],
-            llm_explanation=[
-                'Exemple fictif : plusieurs éléments concordants, avec un risque de recul restant significatif.',
-                'Exemple fictif : éléments favorables et défavorables ; estimation plus incertaine.',
-                'Exemple fictif : informations datées insuffisantes ; aucune probabilité défendable.'],
-            llm_blockers=['','','probability_undeterminable, evidence_insufficient'],
-            selected=[True,True,False]))
-        from zoneinfo import ZoneInfo
-        edited,confirmed=_choice_table(candidates,key,details=dict(demo=True,
-            trade_date=datetime.now(ZoneInfo('Europe/Paris')).date().isoformat()))
-        if confirmed:
-            chosen=edited.loc[edited.Retenir & edited.Eligible,'Symbole'].tolist()
-            refused=edited.loc[edited.Retenir & ~edited.Eligible,'Symbole'].tolist()
-            if refused:st.warning('Exclus de la simulation faute de preuves : '+', '.join(refused))
-            st.info('Simulation uniquement — choix : '+(', '.join(chosen) or 'aucun titre')
-                    +'. Aucun choix réel enregistré, aucun workflow débloqué et aucun ordre envoyé.')
-
-
 def render(folder,report,frame):
-    from service.q051_paper.human_selection import read,check_expiry,approve,approval_path
+    from service.q051_paper.human_selection import read,check_expiry,approve,approval_path,selection_policy,selectable_symbols
     receipt=report['llm_filter']
     st.markdown('#### TOP Oracle — avis GPT / DeepSeek')
     candidates=frame[frame.selected_before_llm].sort_values(
         ['llm_probability_up_without_stop','oracle_rank'],ascending=[False,True],na_position='last')
     contract=receipt['contract']
-    details=dict(demo=False,run_id=report['run_id'],trade_date=report['trade_date'])
+    details=dict(run_id=report['run_id'],trade_date=report['trade_date'])
     st.caption(f'Probabilité estimée : sortie open{contract["exit_session"]} au-dessus du prix d’entrée, '
                f'sans toucher SL {contract["stop_loss_pct"]:.0%} durant H{contract["horizon_sessions"]}. '
                'Estimation GPT/DeepSeek non calibrée, pas une fréquence de réussite démontrée. '
                'Le prix d’entrée réel n’est pas encore connu.')
+    st.caption('« Touche du SL » : au moins une touche avant la sortie. « Hausse à la sortie » : '
+               'cours final supérieur à l’entrée, même si le SL aurait été touché auparavant. '
+               'Les trois probabilités ne s’additionnent pas à 100 %. Le tri conserve la hausse sans SL. '
+               '— : estimation absente, notamment dans les anciennes analyses.')
     expires=datetime.fromisoformat(receipt['approval_expires_at'])
     from zoneinfo import ZoneInfo
     st.caption('Validation possible jusqu’au '+expires.astimezone(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M:%S %Z')
@@ -120,17 +86,48 @@ def render(folder,report,frame):
         st.warning(str(exc))
         _choice_table(candidates,'probability-expired-'+report['run_id'],details=details,read_only=True)
         return
+    policy=selection_policy()
     st.warning('Le batch attend votre choix avant l’étape11. Cochez les titres à transmettre au risque, '
                'puis validez. Valider sans titre annule tous les achats de cette sélection.')
+    if policy['require_qualified_evidence'] and not candidates.selected.any():
+        st.info('Aucun titre ne dispose actuellement de preuves qualifiées. Les cases « Retenir » '
+                'ne permettent pas de contourner ce contrôle ; vous pouvez valider sans titre pour terminer sans achat.')
     key='probability-choice-'+report['run_id']
+    selectable=selectable_symbols(candidates,policy)
+    if not policy['require_qualified_evidence']:
+        st.info('Qualification des preuves facultative pour votre choix manuel. Vous pouvez retenir une estimation '
+                'valide malgré des preuves partielles ; leur qualité reste affichée. '
+                'Identité, validité des réponses, expiration et contrôles de risque restent obligatoires.')
+    # Old refusals based on the previous policy must not survive its explicit change.
+    policy_key=key+'-validation-policy'
+    error_key=key+'-validation-error'
+    if st.session_state.get(policy_key)!=policy:
+        st.session_state.pop(error_key,None)
+        st.session_state[policy_key]=policy
+    previous_error=st.session_state.get(error_key)
+    if previous_error:
+        st.error(previous_error)
     edited,confirmed=_choice_table(candidates,key,details=details)
     if confirmed:
+        chosen=edited.loc[edited.Retenir,'Symbole'].tolist()
+        invalid=sorted(set(chosen)-selectable)
+        if invalid:
+            reason='preuves non qualifiées' if policy['require_qualified_evidence'] else 'estimation absente ou contrôle obligatoire non satisfait'
+            message=('Sélection refusée : '+reason+' pour '+', '.join(invalid)+'. '
+                     'Aucune validation enregistrée ; les étapes 11/12 restent en attente. '
+                     'Décochez ces titres. Vous pouvez valider une sélection vide pour terminer sans achat.')
+            st.session_state[error_key]=message
+            st.error(message)
+            return
         try:
-            chosen=edited.loc[edited.Retenir,'Symbole'].tolist()
             from ihm.services.db import get_engine
-            value=approve(get_engine(),report['run_id'],chosen)
+            with st.spinner('Vérification de la sélection et des preuves archivées…'):
+                value=approve(get_engine(),report['run_id'],chosen)
         except Exception as exc:
-            st.error(f'Sélection non validée : {exc}')
+            message=f'Sélection non validée : {exc}'
+            st.session_state[error_key]=message
+            st.error(message)
         else:
+            st.session_state.pop(error_key,None)
             st.success(f'{len(value["selected_symbols"])} titre(s) validé(s). Un batch en attente peut reprendre les étapes suivantes.')
             st.rerun()

@@ -171,10 +171,10 @@ def qualified(run_id, *, batch, day, artifacts_dir, engine=None, require_human=T
     validate(coverage, protocol['universe'], [day], now=timestamp(coverage['observed_at']))
     if report.get('llm_filter'):
         if engine is None:raise ValueError('Moteur US requis pour revalider les preuves LLM archivées')
-        from service.llm_directional.prompts import PROBABILITY_VERSION
+        from service.llm_directional.prompts import probability_protocol
         from service.q051_paper.probability_filter import validate as validate_probability
         from service.q051_paper.llm_filter import validate as validate_legacy
-        validate_llm=validate_probability if report['llm_filter'].get('protocol')==PROBABILITY_VERSION else validate_legacy
+        validate_llm=validate_probability if probability_protocol(report['llm_filter'].get('protocol')) else validate_legacy
         validate_llm(engine, report, pd.read_parquet(folder/'selection.parquet'), day)
         if require_human:
             from .human_selection import effective

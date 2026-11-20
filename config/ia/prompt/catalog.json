@@ -1,6 +1,20 @@
 {
   "schema_version": 1,
   "prompts": {
+    "cloud.oracle_directional.v11.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v11/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-long-no-stop-probability-v11",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.output.v11": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/v11.txt",
+      "kind": "output_policy"
+    },
     "cloud.oracle_directional.v10.web_search": {
       "runtime": "cloud",
       "family": "oracle_directional",
@@ -159,6 +173,20 @@
       "path": "local/connectivity/v1/system.txt",
       "kind": "system",
       "version": "v1"
+    },
+    "cloud.oracle_directional.v12.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v12/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-long-probabilities-v12",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.output.v12": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/v12.txt",
+      "kind": "output_policy"
     }
   }
 }

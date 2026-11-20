@@ -273,6 +273,7 @@ def render() -> None:
 				render_symbol_table(
 					positions_df,
 					key="alpaca_live_positions",
+					bars_account_id=selected_account_id,
 					symbol_col="symbol",
 					title="📦 Positions ouvertes (broker)",
 					height=320,
@@ -297,6 +298,7 @@ def render() -> None:
 				render_symbol_table(
 					orders_df,
 					key="alpaca_live_orders",
+					bars_account_id=selected_account_id,
 					symbol_col="symbol",
 					title="🧾 Historique des ordres (broker)",
 					height=320,
@@ -355,6 +357,7 @@ def render() -> None:
 			render_symbol_table(
 				canonical_orders_df,
 				key="alpaca_canonical_orders",
+				bars_account_id=selected_account_id,
 				symbol_col="symbol",
 				title="📋 Ordres canoniques d'exécution (DB)",
 				height=260,

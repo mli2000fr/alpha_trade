@@ -18,6 +18,27 @@ def frame():
         'Score Oracle':.8,'Dernier prix ($)':5.66,'Date du prix':date(2026,10,16),'Retenu':True}])
 
 
+def test_frontend_change_invalidates_cached_component_without_restarting_server(monkeypatch):
+    calls=[]
+    cached=table._registered_table_component
+    monkeypatch.setattr(table,'component',lambda name,**kwargs:calls.append((name,kwargs)) or name)
+    table._registered_table_component.clear()
+    try:
+        first=table._registered_table_component('old read-only renderer',table.CSS)
+        assert table._registered_table_component('old read-only renderer',table.CSS)==first
+        current=table._registered_table_component(table.JS,table.CSS)
+        assert current!=first and len(calls)==2
+        assert 'checkbox.type' in calls[-1][1]['js']
+        # The actual mount passes the current contents, rather than relying on
+        # untracked globals in a zero-argument cached function.
+        received=[]
+        monkeypatch.setattr(table,'_registered_table_component',lambda *args:received.append(args) or (lambda **kw:kw))
+        assert table._table_component(key='active-session')=={'key':'active-session'}
+        assert received==[(table.JS,table.CSS)]
+    finally:
+        cached.clear()
+
+
 def test_button_column_is_in_table_after_symbol_not_a_period_label():
     payload=table.table_payload(frame())
     assert [c['label'] for c in payload['columns']][:4]==['Rang Oracle','Symbole','Graphique','Nom de l’entreprise']

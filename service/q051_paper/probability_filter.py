@@ -5,7 +5,7 @@ import json
 import uuid
 
 from common.q051_paper import reference
-from service.llm_directional.prompts import PROBABILITY_VERSION
+from service.llm_directional.prompts import PROBABILITY_FR_VERSION,PROBABILITY_BREAKDOWN_VERSION,probability_protocol
 from service.llm_directional.repository import Repository
 from service.llm_directional.runner import analyze, qualified_selection
 from .llm_filter import manual_config, contexts
@@ -32,7 +32,8 @@ def apply(engine, ranked, *, run_id, batch, day, horizon):
         if len(packets)!=len(candidates) or {p['symbol'] for p in packets}!=set(candidates.symbol):
             raise ValueError('Candidats de probabilité différents du classement LONG')
         for packet in packets:
-            packet['analysis_protocol']=PROBABILITY_VERSION
+            packet['analysis_protocol']=PROBABILITY_BREAKDOWN_VERSION
+            packet['analysis_language']='fr'
             packet['long_without_stop_contract']=contract
             source=candidates[candidates.symbol==packet['symbol']].iloc[0]
             packet['per_symbol_long_context']={k:float(source[k]) for k in ['long_probability','long_auc']
@@ -59,11 +60,13 @@ def apply(engine, ranked, *, run_id, batch, day, horizon):
         llm_id=None;assessments={};allowed=set();input_hash=None
         expiry=(datetime.now(UTC)+timedelta(hours=cfg.max_run_age_hours)).isoformat()
     frame['llm_probability_up_without_stop']=frame.symbol.map(lambda s:assessments.get(s,{}).get('probability_up_without_stop'))
+    for field in ['probability_stop_touch','probability_positive_exit','stop_touch_explanation','positive_exit_explanation']:
+        frame['llm_'+field]=frame.symbol.map(lambda s:assessments.get(s,{}).get(field))
     frame['llm_explanation']=frame.symbol.map(lambda s:assessments.get(s,{}).get('probability_explanation'))
     frame['llm_evidence_quality']=frame.symbol.map(lambda s:assessments.get(s,{}).get('evidence_quality'))
     frame['llm_blockers']=frame.symbol.map(lambda s:', '.join(assessments.get(s,{}).get('selection_blockers',[])))
     frame['selected']=frame.selected & frame.symbol.isin(allowed)
-    receipt=dict(enabled=True,protocol=PROBABILITY_VERSION,approval_required=bool(len(candidates)),
+    receipt=dict(enabled=True,protocol=PROBABILITY_BREAKDOWN_VERSION,analysis_language='fr',approval_required=bool(len(candidates)),
                  run_id=llm_id,requested=len(candidates),selected=sorted(allowed),input_sha256=input_hash,
                  horizon=horizon,contract=contract,approval_expires_at=expiry,
                  provider=cfg.provider_label,analysis_mode='web_search',probability_is_calibrated=False)
@@ -82,7 +85,7 @@ def validate(engine,report,ranked,day):
                   stop_loss_pct=report['profile']['winner']['stop_loss_pct'],exit_session=r['horizon']+1,
                   entry='ACTUAL_REGULAR_HOURS_J1_FILL',entry_day_counts_as_one=True,
                   take_profit_pct=None,trailing_stop_pct=None,return_basis='GROSS_PRICE')
-    if (run['protocol_version']!=PROBABILITY_VERSION or run['batch_id']!=report['batch_id']
+    if (not probability_protocol(run['protocol_version']) or run['protocol_version']!=r['protocol'] or run['batch_id']!=report['batch_id']
             or run['input_sha256']!=r['input_sha256'] or r['contract']!=expected
             or r['horizon']!=report['profile']['winner']['horizon_sessions']
             or snapshot['symbol_source']!='q051-selection:'+report['run_id']
@@ -91,3 +94,6 @@ def validate(engine,report,ranked,day):
                    for p in snapshot['candidates'])
             or current!={i['symbol'] for i in eligible} or current!=set(r['selected'])):
         raise ValueError('Proposition de probabilité altérée ou autre contrat')
+    if run['protocol_version'] in (PROBABILITY_FR_VERSION,PROBABILITY_BREAKDOWN_VERSION) and (r.get('analysis_language')!='fr'
+            or any(p.get('analysis_language')!='fr' for p in snapshot['candidates'])):
+        raise ValueError('Langue française différente du contrat de la nouvelle analyse')
