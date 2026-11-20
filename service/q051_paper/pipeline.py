@@ -1,7 +1,8 @@
 """Scheduled Q051 10/11/12 with immutable selection and per-account admissions.
 
 No training/options filter/global profile mutation. Optional batch/manual cloud LLM
-may veto ranked LONGs. Winner still owns fills, SL5 and the open11 deadline.
+estimates LONG probabilities before explicit human selection. Winner owns fills,
+SL5 and the open11 deadline. Historical trend vetoes remain revalidable.
 """
 import argparse
 from dataclasses import asdict
@@ -90,8 +91,8 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default', llm
     if llm_filter_enabled:
         if account != 'default':
             raise ValueError('Analyse LLM Q051 partagée : lancement initial sur default PAPER requis')
-        from service.q051_paper.llm_filter import manual_config
-        manual_config(protocol['horizon'], reference()['selection']['long_top_n'])
+        from service.q051_paper.probability_filter import config as probability_config
+        probability_config(protocol['horizon'], reference()['selection']['long_top_n'])
     from service.q051_paper.coverage import capture as capture_coverage
     _, broker, _ = make_broker(engine, account)
     coverage, assets = capture_coverage(broker._client, protocol['universe'], account=account, day=day)
@@ -111,7 +112,7 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default', llm
     ranked, policy = rank_selection(verified, root, len(protocol['universe']))
     llm_receipt = None
     if llm_filter_enabled:
-        from service.q051_paper.llm_filter import apply
+        from service.q051_paper.probability_filter import apply
         ranked, llm_receipt = apply(engine, ranked, run_id=run_id, batch=batch, day=day,
                                     horizon=protocol['horizon'])
     ranked.to_parquet(folder/'selection.parquet', index=False)
@@ -142,7 +143,7 @@ def predict(engine, *, run_id, batch, day, artifacts_dir, account='default', llm
     return report
 
 
-def qualified(run_id, *, batch, day, artifacts_dir):
+def qualified(run_id, *, batch, day, artifacts_dir, engine=None, require_human=True):
     folder = directory(run_id)
     report = json.loads((folder/'selection.json').read_text(encoding='utf-8'))
     seal = json.loads((folder/'seal.json').read_text())
@@ -169,8 +170,15 @@ def qualified(run_id, *, batch, day, artifacts_dir):
         raise ValueError('Q051 : preuve de couverture modifiée')
     validate(coverage, protocol['universe'], [day], now=timestamp(coverage['observed_at']))
     if report.get('llm_filter'):
-        from service.q051_paper.llm_filter import validate as validate_llm
+        if engine is None:raise ValueError('Moteur US requis pour revalider les preuves LLM archivées')
+        from service.llm_directional.prompts import PROBABILITY_VERSION
+        from service.q051_paper.probability_filter import validate as validate_probability
+        from service.q051_paper.llm_filter import validate as validate_legacy
+        validate_llm=validate_probability if report['llm_filter'].get('protocol')==PROBABILITY_VERSION else validate_legacy
         validate_llm(engine, report, pd.read_parquet(folder/'selection.parquet'), day)
+        if require_human:
+            from .human_selection import effective
+            report,_=effective(folder,report,pd.read_parquet(folder/'selection.parquet'))
     return folder, report
 
 
@@ -186,6 +194,10 @@ def make_broker(engine, account, *, entry_time_in_force=None,exit_time_in_force=
 
 
 def risk(engine, folder, selection, account, day):
+    from .human_selection import required,effective
+    if required(selection):
+        original=json.loads((folder/'selection.json').read_text(encoding='utf-8'))
+        selection,_=effective(folder,original,pd.read_parquet(folder/'selection.parquet'))
     from service.q051_paper.risk import capture, complete_context, quantity
     from execution_engine.winner_live_risk import concentration_allowed
     from common.q051_paper import risk_config
@@ -199,6 +211,7 @@ def risk(engine, folder, selection, account, day):
         saved = json.loads(path.read_text())
         seal = account_folder/'risk.seal.json'
         if (saved.get('status') == 'COMPLETED' and saved.get('selection_sha256') == digest(folder/'selection.json')
+                and saved.get('human_selection_sha256') == selection.get('human_selection_sha256')
                 and seal.exists() and json.loads(seal.read_text())['risk_sha256'] == digest(path)):
             return saved
         raise ValueError('Q051 : risque précédent incomplet ; réconciliation requise')
@@ -208,6 +221,10 @@ def risk(engine, folder, selection, account, day):
     try:
         write(account_folder/'risk.claim.json', dict(account_id=account, run_id=owner, started_at=datetime.now(UTC)))
         ranked = pd.read_parquet(folder/'selection.parquet')
+        from .human_selection import effective,required
+        if required(selection):
+            original=json.loads((folder/'selection.json').read_text(encoding='utf-8'))
+            selection,ranked=effective(folder,original,ranked)
         selected = ranked[ranked.selected].sort_values('rank')
         now = datetime.now(UTC)
         context = capture(repo, broker, account, day, now)
@@ -270,6 +287,8 @@ def risk(engine, folder, selection, account, day):
             finished_at=datetime.now(UTC).isoformat())
         if selection.get('llm_filter'):
             report['llm_filter'] = selection['llm_filter']
+        if selection.get('human_selection_sha256'):
+            report['human_selection_sha256']=selection['human_selection_sha256']
         write(path, report)
         write(account_folder/'risk.seal.json', dict(risk_sha256=digest(path)))
         return report
@@ -278,6 +297,10 @@ def risk(engine, folder, selection, account, day):
 
 
 def execute(engine, folder, selection, account, day):
+    from .human_selection import required,effective
+    if required(selection):
+        original=json.loads((folder/'selection.json').read_text(encoding='utf-8'))
+        selection,_=effective(folder,original,pd.read_parquet(folder/'selection.parquet'))
     from execution_engine.winner_plans import stage_targets, require_campaign_watcher
     from execution_engine.winner_campaign_store import WinnerCampaignStore
     from execution_engine.winner_standard_entry import submit_standard_plans
@@ -292,6 +315,8 @@ def execute(engine, folder, selection, account, day):
             or result['selection_sha256'] != digest(folder/'selection.json')
             or result['profile_sha256'] != reference()['sha256']):
         raise ValueError('Q051 : risque exact du compte/date/sélection requis')
+    if result.get('human_selection_sha256')!=selection.get('human_selection_sha256'):
+        raise ValueError('Q051 : validation humaine différente de celle dimensionnée au risque')
     if not result['targets']:
         return dict(status='COMPLETED', stage='execution', targets=0, submitted=0, reason='NO_RISK_TARGETS')
     if (p/'execution.json').exists():
@@ -380,7 +405,7 @@ def run_stage(args):
                          artifacts_dir=args.artifacts_dir, account=args.account,
                          **({'llm_filter_enabled':True} if getattr(args,'llm_filter',False) else {}))
     else:
-        folder, selected = qualified(args.run_id, batch=args.batch_id, day=day, artifacts_dir=args.artifacts_dir)
+        folder, selected = qualified(args.run_id, batch=args.batch_id, day=day, artifacts_dir=args.artifacts_dir,engine=engine)
         report = risk(engine, folder, selected, args.account, day) if args.stage == 'risk' else execute(engine, folder, selected, args.account, day)
     from database.run_business_summaries import emit_run_summary, persist_run_business_summary
     summary = dict(report, step_key={'predict':'ml_predict','risk':'risk_management','execution':'execution'}[args.stage])

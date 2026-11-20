@@ -13,6 +13,8 @@ from service.forward_pit import us_pipeline
 
 @pytest.fixture
 def default_view(monkeypatch):
+    policy=dict(us_pipeline.load_pipeline_policy(),gpt_filter_enabled=False)
+    monkeypatch.setattr(us_pipeline,'load_pipeline_policy',lambda:policy)
     # No broker/network access is required to construct the page's defaults.
     monkeypatch.setattr(us_pipeline, 'require_paper_account', lambda *a: None)
     monkeypatch.setattr('common.q051_paper.require_paper', lambda *a: None)

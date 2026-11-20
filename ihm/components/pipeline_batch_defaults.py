@@ -116,7 +116,7 @@ def render(*, db_config, active_runs):
         if not llm_cfg.manual_opt_in_allowed:
             st.session_state[key] = configured_llm
         use_llm = st.checkbox(
-            f'🌐 Filtrage {llm_cfg.provider_label} — {llm_cfg.mode_label} après le classement LONG per-symbol',
+            f'🌐 Filtrage {llm_cfg.provider_label} — probabilité de hausse sans SL, recherche Web après per-symbol',
             value=configured_llm, key=key, disabled=blocked or not llm_cfg.manual_opt_in_allowed,
             help='Défaut : config.yaml → us_pipeline.gpt_filter_enabled. Une modification ici ne vaut que pour ce lancement. Les candidats LONG sont analysés avant le risque ; aucun SHORT ni remplacement.')
         st.caption(f'Paramètre du batch : us_pipeline.gpt_filter_enabled = {str(configured_llm).lower()}. '
@@ -125,8 +125,9 @@ def render(*, db_config, active_runs):
             st.caption('Activation manuelle bloquée par config.yaml → llm_directional_filter.manual_opt_in_allowed.')
         if use_llm:
             st.info(f'{llm_cfg.provider_label} analysera uniquement les candidats LONG sélectionnés, sur l’horizon du modèle. '
-                    'Appels API payants uniquement au lancement. SL, quantités et sortie Winner conservés. '
-                    'La sélection finale est partagée entre les comptes papier.')
+                    'Recherche Web et dossier local ; appels API payants uniquement au lancement. '
+                    'Vous validerez les titres dans le tableau avant le risque. '
+                    'La sélection validée est partagée entre les comptes papier ; protections Winner conservées.')
         if use_llm != configured_llm:
             st.caption('Choix différent du batch pour ce lancement uniquement ; config.yaml reste inchangé.')
     override_requested = use_llm != configured_llm
@@ -181,8 +182,7 @@ def render_selection(view):
     for path in ARTIFACTS.glob('q051-*/selection.json'):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
-            if (record.get('status') == 'COMPLETED' and record.get('trade_date') == opts.trade_date
-                    and record.get('batch_id') == opts.ml_predict_batch_id
+            if (record.get('status') == 'COMPLETED' and record.get('batch_id') == opts.ml_predict_batch_id
                     and record.get('strategy_profile') == opts.q051_profile_id):
                 matches.append((record.get('cutoff', ''), path, record))
         except (OSError, ValueError):
@@ -191,7 +191,13 @@ def render_selection(view):
         if not matches:
             st.info(f'Aucune sélection quotidienne terminée pour la séance {opts.trade_date} et ce profil.')
             return
-        _, path, record = max(matches, key=lambda item: item[0])
+        matches.sort(key=lambda item:item[0],reverse=True)
+        # A batch may still be waiting after midnight; its exact dated proposal
+        # must remain selectable even though today's launch preview has changed.
+        index=st.selectbox('Sélection du parcours à consulter',range(len(matches)),
+            format_func=lambda i:f'{matches[i][2]["trade_date"]} · {matches[i][2]["run_id"]}',
+            key='pipeline_us_defaults_proposal') if len(matches)>1 else 0
+        _, path, record = matches[index]
         try:
             seal = json.loads((path.parent/'seal.json').read_text(encoding='utf-8'))
             if (seal['report_sha256'] != digest(path)
@@ -199,7 +205,7 @@ def render_selection(view):
                 raise ValueError('Empreinte de la sélection incompatible')
             import pandas as pd
             frame = pd.read_parquet(path.parent/'selection.parquet')
-            st.caption(f'Sélection archivée : {record["run_id"]} · cutoff {record["cutoff"]}. '
+            st.caption(f'Sélection archivée : {record["run_id"]} · séance {record["trade_date"]} · cutoff {record["cutoff"]}. '
                        'Retenu ne signifie ni approuvé par le risque, ni acheté.')
             oracle_score = 'proba_extreme' if 'proba_extreme' in frame else 'oracle_score'
             names = {'symbol':'Symbole', 'oracle_rank':'Rang Oracle', oracle_score:'Score Oracle',
@@ -211,8 +217,13 @@ def render_selection(view):
                 info = record['llm_filter']
                 st.caption(f'Filtre LLM : {info.get("run_id") or "aucun candidat à analyser"} · '
                            f'H{info["horizon"]} · {len(info["selected"])} retenu(s) sur {info["requested"]}.')
-            st.dataframe(frame[[k for k in names if k in frame]].rename(columns=names),
-                         hide_index=True, use_container_width=True)
+            from service.llm_directional.prompts import PROBABILITY_VERSION
+            if record.get('llm_filter',{}).get('protocol')==PROBABILITY_VERSION:
+                from ihm.components.probability_selection import render as render_probability
+                render_probability(path.parent,record,frame)
+            else:
+                st.dataframe(frame[[k for k in names if k in frame]].rename(columns=names),
+                             hide_index=True, use_container_width=True)
         except (OSError, ValueError, KeyError) as exc:
             st.warning(f'Sélection archivée indisponible : {exc}')
             return

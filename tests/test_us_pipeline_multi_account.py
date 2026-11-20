@@ -89,10 +89,12 @@ def test_false_runs_primary_only_and_does_not_enumerate_accounts(env):
 def test_manual_q051_llm_selection_shared_without_second_analysis(env):
     env.policy['b_anti_sl_reference']=dict(enabled=True,apply_anti_sl=False,model_batch_id='model-test')
     from common.q051_paper import pipeline_options
+    from unittest.mock import patch
     # Exercise full native account orchestration with the explicit override.
-    result=us_pipeline.execute_pipeline(
-        SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
-        dict(market_code='US_EQ',_manual_q051_llm_filter=True),'manual-llm-test',False)
+    with patch('service.q051_paper.human_selection.wait_for_selection',return_value={'status':'HUMAN_SELECTION_VALIDATED'}):
+        result=us_pipeline.execute_pipeline(
+            SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
+            dict(market_code='US_EQ',_manual_q051_llm_filter=True),'manual-llm-test',False)
     assert [r['options'].account_id for r in env.starts]==['default','test1','test2']
     assert all(r['options'].q051_paper_enabled and r['options'].llm_filter_enabled for r in env.starts)
     assert len({r['options'].q051_run_id for r in env.starts})==1

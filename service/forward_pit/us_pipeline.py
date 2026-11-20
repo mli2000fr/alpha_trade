@@ -328,6 +328,9 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     directory.mkdir(parents=True, exist_ok=False)
     (directory/'plan.json').write_text(json.dumps(plan, indent=2, default=str), encoding='utf-8')
     def before_step(step, current_options, stop_event):
+        if step.key=='risk_management' and current_options.q051_paper_enabled and current_options.llm_filter_enabled:
+            from service.q051_paper.human_selection import wait_for_selection
+            return wait_for_selection(current_options,stop_event)
         if step.key != 'execution' or current_options.execution_mode != 'paper':
             return None
         from service.forward_pit.watcher_startup import ensure_watcher

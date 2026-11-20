@@ -135,8 +135,9 @@ llm_directional_filter:
   separate_trend_evidence: true  # v9 : tendance 1–10 ou indéterminable, preuves et sélection séparées.
   long_score_threshold: 7  # LONG si score strictement supérieur à ce seuil.
   short_score_threshold: 4  # SHORT si score strictement inférieur à ce seuil ; entre les deux : neutre.
-  analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
-  # Le LLM évalue une tendance LONG/SHORT/ABSTAIN sur horizon, sans objectif TP/SL.
+  analysis_mode: web_search  # Probabilité LONG sans SL : Web + données locales, uniquement si le filtre est activé.
+  # B/Q051 : probabilité de hausse sans toucher le SL Winner + validation humaine (v10).
+  # Les anciens parcours de tendance conservent leurs seuils ci-dessus.
   consensus_max_periods: 4
   consensus_history_count: 3
   consensus_max_age_days: 7

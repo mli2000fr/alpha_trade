@@ -163,6 +163,9 @@ def llm_message(run, items):
              f"Analyse {run['run_id']} · modèle {model}",
              f"État : {run['status']}"]
     lines.append('Mode : '+('données locales uniquement' if config.get('analysis_mode')=='local_data_only' else 'recherche Web'))
+    probability_mode=config.get('scoring_mode')=='long_without_stop_probability'
+    if probability_mode:
+        lines.append('Probabilité estimée de sortie positive sans toucher le SL. Validation manuelle requise dans Pipeline avant le risque ; aucun achat autorisé par cette seule analyse.')
     if config.get('scoring_mode')=='direction_1_10':
         lines.append(f"Orientation 1–10 : LONG > {config.get('long_score_threshold',8)}, "
                      f"SHORT < {config.get('short_score_threshold',3)}, sinon neutre.")
@@ -170,15 +173,16 @@ def llm_message(run, items):
         lines.append('Tendance ≠ sélection : indéterminable sans score ; preuves partielles/insuffisantes bloquantes.')
     by_symbol = {row['symbol']: row for row in items}
     if completed and selected:
-        lines.append(f'Titres retenus : {len(selected)}')
+        lines.append(f'{"Candidats évaluables" if probability_mode else "Titres retenus"} : {len(selected)}')
         for symbol in selected:
             parsed = json.loads(by_symbol[symbol]['assessment_json'])
-            note=(f"score d’orientation {parsed['direction_score']}/10" if 'direction_score' in parsed else
+            note=(f"probabilité non calibrée {parsed['probability_up_without_stop']:.1%}" if probability_mode else
+                  f"score d’orientation {parsed['direction_score']}/10" if 'direction_score' in parsed else
                   f"note de confiance {_fmt(parsed['confidence'], 3)}")
             if 'trend_status' in parsed:
                 from service.llm_directional.trend_evidence import QUALITY_LABELS
                 note+=f" — preuves {QUALITY_LABELS.get(parsed.get('evidence_quality'),'non évaluées').lower()}"
-            lines.append(f"• {symbol} — {parsed['decision']} — {note}")
+            lines.append(f"• {symbol} — {note}" if probability_mode else f"• {symbol} — {parsed['decision']} — {note}")
         lines.append('Note déclarée par le LLM, pas une probabilité calibrée. Validation risque encore requise.')
     else:
         lines.append('Aucun titre publié.')

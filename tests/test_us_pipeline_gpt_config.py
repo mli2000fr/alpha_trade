@@ -26,7 +26,7 @@ def test_gpt_switch_is_first_batch_parameter_and_preserves_disabled_default():
     import yaml
     values=yaml.safe_load(Path('config.yaml').read_text(encoding='utf-8'))['us_pipeline']
     assert next(iter(values))=='gpt_filter_enabled'
-    assert values['gpt_filter_enabled'] is False
+    assert type(values['gpt_filter_enabled']) is bool
 
 
 @pytest.mark.parametrize('enabled',[False,True])

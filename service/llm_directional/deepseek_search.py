@@ -53,6 +53,9 @@ def build_request(context,config,base_schema):
     since=(cutoff-timedelta(days=max_age)).date().isoformat()
     until=(cutoff+timedelta(days=1)).date().isoformat()
     suffixes=('earnings guidance outlook','risks dilution debt SEC')
+    from .prompts import PROBABILITY_VERSION
+    if context['analysis_protocol']==PROBABILITY_VERSION:
+        suffixes=('earnings analyst consensus revisions','guidance news risks SEC')
     searches=[dict(query=f'{identity} {tail} after:{since} before:{until}',
                    count=config.deepseek_search_results,need_content=True)
               for tail in suffixes[:min(config.deepseek_search_queries,config.max_tool_calls)]]

@@ -159,6 +159,19 @@ def test_missing_selection_or_account_identity_never_adopts_another_run(env):
     assert not env.state()['eligible']
 
 
+def test_expired_pre_risk_human_wait_can_start_fresh_instead_of_reusing_old_selection(env):
+    env.child('prediction','ml_predict');env.record(status='failed',children=['prediction'])
+    record=env.root/'artifacts/ihm_pipeline_runs/pipeline_workflow/workflow/record.json'
+    payload=json.loads(record.read_text());payload['workflow_current_step_key']='ml_predict'
+    record.write_text(json.dumps(payload))
+    env.add(details=dict(trade_date='2026-11-18',account_id='default',
+        options=dict(q051_run_id='expired-selection'),
+        account_workflows=[dict(account_id='default',workflow_run_id='workflow')]))
+    state=env.state()
+    assert state['eligible'] and not state['completed_accounts']
+    assert state['resume_options'] is None  # fresh_pipeline_options allocates a new step10 identity.
+
+
 def test_cli_forwards_explicit_recovery_date_and_rejects_other_batches(monkeypatch):
     import sys
     from service.forward_pit import batch

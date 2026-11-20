@@ -1,0 +1,2 @@
+
+Output policy: estimate the joint LONG success event defined in long_without_stop_contract. No ranking quota, minimum probability or automatic buy decision is requested. Probability is an uncalibrated estimate, never a guarantee. If no defensible estimate is possible, return probability_status UNDETERMINABLE and probability_up_without_stop null. Web research is mandatory, including searches for missing local consensus/news when relevant. Human selection and the application's independent evidence/risk checks remain required.

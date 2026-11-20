@@ -59,8 +59,8 @@ class FilterConfig:
     evidence_context_max_age_minutes: int = 30
 
     def __post_init__(self):
-        if self.scoring_mode not in ('legacy_confidence', 'direction_1_10'):
-            raise ValueError('scoring_mode : legacy_confidence | direction_1_10')
+        if self.scoring_mode not in ('legacy_confidence', 'direction_1_10', 'long_without_stop_probability'):
+            raise ValueError('scoring_mode : legacy_confidence | direction_1_10 | long_without_stop_probability')
         if type(self.separate_trend_evidence) is not bool:
             raise ValueError('separate_trend_evidence doit être booléen')
         if self.separate_trend_evidence and self.scoring_mode != 'direction_1_10':

@@ -25,12 +25,12 @@ scellées de la sélection correspondante ; ils ne prouvent pas le remplissage.
 `config.yaml → us_pipeline` est `gpt_filter_enabled: false`.
 `true` active le filtre pour les prochains cycles du batch ; `false` le désactive.
 Quand **Utiliser la configuration du batch us_pipeline** est coché, cette valeur
-détermine aussi le réglage initial de **Filtrage GPT — données locales uniquement après le
-classement LONG per-symbol** (le libellé suit le fournisseur/mode configuré).
+détermine aussi le réglage initial de **Filtrage GPT — probabilité de hausse sans SL,
+recherche Web après per-symbol** (le fournisseur suit la configuration).
 Un changement de ce paramètre met à jour la case, même dans une session IHM
 existante. Une modification manuelle de la case vaut pour ce lancement uniquement,
 sans écrire le YAML, y compris pour désactiver GPT alors que le batch l'active.
-Le parcours devient Oracle → LONG per-symbol → GPT/DeepSeek → risque → Winner.
+Le parcours devient Oracle → LONG per-symbol → GPT/DeepSeek → validation humaine → risque → Winner.
 Le LLM reçoit uniquement les candidats LONG retenus, avec l'horizon du modèle
 (H10 pour B). Il peut en retirer, sans remplacement par les rangs suivants et
 sans SHORT automatique. Les protections et le dimensionnement B restent ceux
@@ -47,7 +47,13 @@ sont archivées dans les tables LLM existantes ; une réponse invalide bloque
 la publication, sans repli sur les candidats non filtrés. La sélection scellée
 est ensuite partagée entre les comptes, sans réinterroger le LLM pour chacun.
 Le rattrapage conserve ses choix initiaux ; la case ne modifie pas un ancien run.
-Le score reste une tendance 1–10, pas une probabilité de hausse sans toucher SL.
+**Évolution du 20/11/2026 :** les nouvelles analyses de ce parcours estiment la
+probabilité d'une sortie open(H+1) au-dessus de l'entrée sans toucher le SL.
+Web est obligatoire, notamment pour compléter le consensus et les informations
+locales absentes. Le tableau est trié par cette estimation, avec cases décochées
+et bouton **Valider la sélection**. Le batch attend la validation avant 11 ;
+aucun achat ne part automatiquement de la seule réponse du LLM. L'estimation
+n'est pas calibrée. [Définition, limites et traces](../ml/llm_probabilite_hausse_sans_sl_20261120.md).
 
 Le suivi et les logs restent dans le centre d'exécution. Le contrôle de clôture
 US est conservé ; le bouton de rattrapage n'apparaît que pour une séance

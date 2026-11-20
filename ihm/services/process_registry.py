@@ -1421,8 +1421,6 @@ def _run_pipeline_workflow(
                 return
 
             step_label = f"{step.num}. {step.name}"
-            _update_workflow_record(managed, workflow_current_step_key=step.key,
-                                    workflow_current_step_label=step_label)
             if before_step is not None:
                 preparation = before_step(step, options, managed.stop_event)
                 if preparation is not None:
@@ -1431,6 +1429,11 @@ def _run_pipeline_workflow(
                 _finalize_workflow_record(managed, status="stopped", returncode=-3,
                                           workflow_completed_steps=completed_steps)
                 return
+            # Preparation may wait for human approval and expire without ever
+            # starting risk. Keep the previous actual step until it succeeds;
+            # recovery must not mistake that wait for an attempted order path.
+            _update_workflow_record(managed, workflow_current_step_key=step.key,
+                                    workflow_current_step_label=step_label)
             _append_workflow_event(managed, f"=== [{index}/{total_steps}] Démarrage {step_label} ===")
             child_record = start_pipeline_run(
                 step.key,

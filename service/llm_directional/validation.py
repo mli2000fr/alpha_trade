@@ -56,7 +56,7 @@ def _publication_status(value, now, max_age_days):
     return 'fresh_timestamp_claim'
 
 
-def _parse_web_response(response, symbol, config, observed_at, *, response_schema=None, score_mode=False, separated=False):
+def _parse_web_response(response, symbol, config, observed_at, *, response_schema=None, score_mode=False, separated=False, probability_mode=False):
     provider_dates=None
     from .prompts import native_search_protocol
     if (config.provider=='deepseek' and native_search_protocol(response.get('analysis_protocol'))
@@ -91,6 +91,9 @@ def _parse_web_response(response, symbol, config, observed_at, *, response_schem
         raise ValueError('Aucune recherche Web terminée')
     result = json.loads(''.join(texts))
     validate(result, response_schema or SCHEMA)
+    if probability_mode:
+        from .probability import normalize
+        normalize(result)
     if score_mode:
         from .direction_score import apply_score
         apply_score(result, config, separated=separated)
@@ -134,7 +137,7 @@ def _parse_web_response(response, symbol, config, observed_at, *, response_schem
         # The directional reasoning may depend on an excluded claim. Do not
         # silently endorse that reasoning just because other sources are dated.
         blockers.append('excluded_untraceable_sources')
-    if not score_mode and result['confidence'] < config.min_confidence:
+    if not score_mode and not probability_mode and result['confidence'] < config.min_confidence:
         blockers.append('confidence_below_threshold')
     if result['decision'] == 'SHORT' and not config.allow_short:
         blockers.append('short_not_allowed')
@@ -225,6 +228,10 @@ def parse_response(response, symbol, config, observed_at, context=None):
     version=context.get('analysis_protocol') if context else None
     score_mode=score_protocol(version)
     separated=version==TREND_EVIDENCE_VERSION
+    from .prompts import PROBABILITY_VERSION
+    probability_mode=version==PROBABILITY_VERSION
+    if probability_mode and (config.analysis_mode!='web_search' or config.scoring_mode!='long_without_stop_probability'):
+        raise ValueError('La probabilité sans SL exige son protocole et une recherche Web réelle')
     if score_mode and config.scoring_mode!='direction_1_10':
         raise ValueError('Protocole de score incompatible avec la configuration')
     if context and (version==DEEPSEEK_SEARCH_VERSION or fresh_protocol(version) and config.provider=='deepseek' and config.analysis_mode=='web_search'):
@@ -245,7 +252,7 @@ def parse_response(response, symbol, config, observed_at, context=None):
     if not local:
         web_config=(replace(config,max_source_age_days=min(config.max_source_age_days,config.evidence_news_max_age_days))
                     if fresh_protocol(version) else config)
-        result=_parse_web_response(response,symbol,web_config,observed_at,response_schema=response_schema(SCHEMA,version),score_mode=score_mode,separated=separated)
+        result=_parse_web_response(response,symbol,web_config,observed_at,response_schema=response_schema(SCHEMA,version),score_mode=score_mode,separated=separated or probability_mode,probability_mode=probability_mode)
     else:
         normalized=deepseek_output(response) if config.provider=='deepseek' else response
         if normalized.get('status')!='completed':
@@ -293,6 +300,9 @@ def parse_response(response, symbol, config, observed_at, context=None):
     if separated:
         from .trend_evidence import qualify_evidence
         qualify_evidence(result)
+    if probability_mode:
+        from .probability import qualify
+        qualify(result,context)
     result['eligible']=result['decision']!='ABSTAIN' and not result['selection_blockers']
     result['assessment_outcome']=('ABSTAIN' if result['decision']=='ABSTAIN' else
         'ELIGIBLE' if result['eligible'] else 'ABSTAIN_UNQUALIFIED')
@@ -318,5 +328,8 @@ def select_symbols(items, config):
                 expected=score_decision(item.get('direction_score'),config)
             if item['decision']!=expected or item['eligible'] and (expected=='ABSTAIN' or expected=='SHORT' and not config.allow_short):
                 raise ValueError('Sélection score/direction incohérente')
-    eligible.sort(key=selection_sort_key)
+    if config.scoring_mode=='long_without_stop_probability':
+        eligible.sort(key=lambda x:(-x['probability_up_without_stop'],x['oracle_rank'],x['symbol']))
+    else:
+        eligible.sort(key=selection_sort_key)
     return [item['symbol'] for item in eligible[:config.max_selected]]

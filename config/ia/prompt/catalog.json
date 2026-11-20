@@ -1,6 +1,20 @@
 {
   "schema_version": 1,
   "prompts": {
+    "cloud.oracle_directional.v10.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v10/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-long-no-stop-probability-v10",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.output.v10": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/v10.txt",
+      "kind": "output_policy"
+    },
     "cloud.oracle_directional.v5.local_data_only": {
       "runtime": "cloud",
       "family": "oracle_directional",

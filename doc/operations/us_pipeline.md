@@ -6,6 +6,33 @@
 
 ## Périmètre
 
+**20 novembre 2026 — GPT/DeepSeek : probabilité et validation manuelle.**
+Pour les nouveaux cycles B/Q051 avec filtre GPT activé, chaque titre retenu
+après per-symbol est analysé avec les données locales qualifiées et une
+recherche Web obligatoire, notamment pour les informations manquantes
+(consensus, annonces, guidance et risques). Le LLM estime la probabilité de
+sortir au-dessus du prix d'entrée réel à open(H+1), sans toucher le SL Winner
+pendant H séances. Ce pourcentage est une estimation non calibrée.
+
+Dans la page Pipeline, étape **10 → TOP Oracle — avis GPT / DeepSeek**, les
+candidats sont triés par probabilité décroissante, avec cases initialement
+décochées et bouton **Valider la sélection**. Le batch et le lancement Pipeline
+utilisant sa configuration commune attendent cette validation avant l'étape11,
+puis continuent jusqu'à la fin. Seule la liste validée est transmise au risque
+et partagée entre comptes PAPER ; le bouton ne passe aucun ordre lui-même.
+L'heure d'expiration est affichée. À expiration, le run s'arrête sans nouvel
+achat ; il faut lancer un **nouveau batch/pipeline et une nouvelle étape10**,
+pas reprendre 11/12 avec l'ancienne analyse. Aucun rafraîchissement payant ni
+approbation automatique. Le tableau reste accessible après minuit grâce au
+choix de la sélection datée exacte.
+
+Protocole v10 distinct des analyses historiques, validation immuable liée au
+bilan de risque, mêmes protections Winner. **835 tests passent** au contrôle
+final ciblé, dont attente/reprise, expiration, choix après minuit et partage
+entre comptes. Tests sans appel fournisseur payant, notification réelle
+ou ordre broker. Reçu : `artifacts/operations/llm_probability_20261120/tests-final.xml`.
+[Événement, données, prompts, validation et stockage](../ml/llm_probabilite_hausse_sans_sl_20261120.md).
+
 **19 novembre 2026 — la page Pipeline utilise le batch par défaut.** La case
 « Utiliser la configuration du batch us_pipeline », cochée par défaut, propose
 le lanceur batch existant, avec les mêmes étapes, collectes, notifications,
@@ -58,7 +85,8 @@ certificats HTTPS reste activée.
 Le déploiement courant utilise `us_pipeline.b_anti_sl_reference.enabled: true`
 avec `apply_anti_sl: false` (B témoin), modèle
 `model-factory-20261118172104-2f6a31`. TOP10 % Oracle → TOP10 LONG par titre,
-SL5/open11, sans vol20/régime/B4, ni filtres options/GPT. Les entrées et sorties
+SL5/open11, sans vol20/régime/B4 ni filtre options. GPT suit désormais la bascule
+`us_pipeline.gpt_filter_enabled` et le contrat v10 décrit ci-dessus. Les entrées et sorties
 temporelles utilisent DAY. Les paramètres Q051 vol20/régime décrits ci-dessous
 sont conservés pour l'historique ; ce profil est actuellement désactivé.
 [Correctif des ordres et protections](q051_watcher_day_reparation_20261119.md).
@@ -87,9 +115,10 @@ principal et des secondaires, et précise le compte fautif.
 `false` limite le batch au compte configuré. La répétition ne s'applique que si
 11 **et** 12 sont sélectionnées et `execution_mode: paper` ; aucune étape omise
 n'est insérée. La liste des comptes et le plan sont figés au départ, y compris
-le vendredi. Avec le filtre LLM, encore limité à `default`, mettre cette option
-à `false` : le batch refuse un enchaînement non qualifié au lieu de supprimer
-le filtre pour les comptes secondaires. Les lancements déjà en cours ne sont
+le vendredi. Pour les anciens parcours LLM hors B/Q051, limités à `default`,
+mettre cette option à `false` : le batch refuse un enchaînement non qualifié.
+Le parcours B/Q051 partage au contraire le choix humain exact entre les comptes
+PAPER secondaires, sans nouvel appel LLM. Les lancements déjà en cours ne sont
 pas modifiés rétroactivement.
 [Contrat et stockage multi-comptes](options_filter_multi_account.md).
 

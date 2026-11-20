@@ -18,6 +18,8 @@ from service.forward_pit import us_pipeline
 
 @pytest.fixture
 def manual_view(monkeypatch):
+    policy=dict(us_pipeline.load_pipeline_policy(),gpt_filter_enabled=False)
+    monkeypatch.setattr(us_pipeline,'load_pipeline_policy',lambda:policy)
     monkeypatch.setattr(us_pipeline,'require_paper_account',lambda *a:None)
     monkeypatch.setattr('common.q051_paper.require_paper',lambda *a:None)
     monkeypatch.setattr(us_pipeline,'additional_paper_accounts',lambda *a:('test1','test2'))
@@ -154,6 +156,7 @@ def test_failed_analysis_never_publishes_an_unfiltered_fallback(fake_llm,monkeyp
 
 
 def test_explicit_manual_permission_can_disable_the_option(monkeypatch):
+    monkeypatch.setattr(us_pipeline,'load_pipeline_policy',lambda:{'gpt_filter_enabled':False})
     monkeypatch.setattr(veto,'load_filter_config',lambda:FilterConfig(manual_opt_in_allowed=False))
     with pytest.raises(ValueError,match='interdite'):
         veto.manual_config(10,5)
