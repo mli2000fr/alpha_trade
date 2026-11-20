@@ -43,7 +43,7 @@ def require_current_watcher_code(process):
     """Reject a running interpreter which has not loaded the current campaign code."""
     from pathlib import Path
     root = Path(__file__).parent
-    files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
+    files = ['winner_runtime.py', 'winner_protection_recovery.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
         'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
         'protection_watcher.py']
     dependencies = [root / name for name in files] + [
@@ -51,6 +51,7 @@ def require_current_watcher_code(process):
         ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
     dependencies.append(root.parent/'common'/'winner_pyramiding.py')
     dependencies.append(root.parent/'common'/'winner_delayed.py')
+    dependencies.append(root.parent/'service'/'alpaca'/'clientAlpaca.py')
     dependencies.extend([root.parent/'common'/'q051_paper.py',
         root.parent/'service'/'q051_paper'/'risk.py', root.parent/'risk_management'/'portfolio_volatility.py'])
     dependencies.append(root.parent/'config'/'strategies'/'q051_vol20_regime_reference.json')

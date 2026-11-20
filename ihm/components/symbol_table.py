@@ -135,6 +135,7 @@ def render_symbol_table(
     bars_lookback_days: int = 365,
     bars_account_id: str | None = None,
     hide_index: bool = True,
+    column_config: dict[str, Any] | None = None,
 ) -> str | None:
     """Affiche un DataFrame cliquable, ouvrant une popin de bars par symbole.
 
@@ -152,7 +153,7 @@ def render_symbol_table(
         return None
     if symbol_col not in df.columns:
         # Pas de colonne symbole : on rend la table standard sans actions.
-        st.dataframe(df, width="stretch", height=height, hide_index=hide_index)
+        st.dataframe(df, width="stretch", height=height, hide_index=hide_index,column_config=column_config)
         return None
 
     extra_actions = list(extra_actions or [])
@@ -166,6 +167,7 @@ def render_symbol_table(
         on_select="rerun",
         selection_mode="single-row",
         key=key,
+        column_config=column_config,
     )
 
     row_index = _selected_row_index(key)

@@ -174,6 +174,14 @@ class NativeWinnerBroker:
         # as a flat account. A missing response is never evidence of a closure.
         return self.broker.get_all_positions()
 
+    def open_orders(self,symbol):
+        rows=self.client.list_orders(status='open',symbols=[symbol],limit=500)
+        if len(rows)>=500:raise ValueError('Open order coverage truncated; protection recovery blocked')
+        return rows
+
+    def market_open(self):
+        return self.client.is_market_open()
+
     def cancel(self, broker_id):
         terminal = {'filled', 'canceled', 'cancelled', 'rejected', 'expired'}
         current = self.get(broker_id)
