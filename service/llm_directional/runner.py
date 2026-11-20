@@ -116,9 +116,10 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise ValueError('Nombre de candidats incohérent')
     if len({c['symbol'] for c in contexts}) != len(contexts):
         raise ValueError('Candidats dupliqués')
-    from .prompts import TREND_EVIDENCE_VERSION, score_protocol
+    from .prompts import TREND_EVIDENCE_VERSION, probability_protocol, score_protocol
     if any(score_protocol(c.get('analysis_protocol'))!=(config.scoring_mode=='direction_1_10')
-           or (c.get('analysis_protocol')==TREND_EVIDENCE_VERSION)!=config.separate_trend_evidence for c in contexts):
+           or (c.get('analysis_protocol')==TREND_EVIDENCE_VERSION)!=config.separate_trend_evidence
+           or probability_protocol(c.get('analysis_protocol'))!=(config.scoring_mode=='long_without_stop_probability') for c in contexts):
         raise ValueError('Nouveau run : protocole de réponse incompatible avec scoring_mode')
     snapshot = {'symbol_source': symbol_source, 'capital_preset_key': capital_preset_key,
                 'candidates': contexts}
@@ -290,11 +291,11 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
 
 
 def _protocol(contexts):
-    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION
+    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION,probability_protocol
     if not isinstance(contexts,list) or not contexts or any(not isinstance(c,dict) for c in contexts):
         raise ValueError('Candidats de protocole LLM invalides')
     versions={context.get('analysis_protocol',PROTOCOL_VERSION) for context in contexts}
-    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION}):
+    if len(versions)!=1 or any(v not in {PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION} and not probability_protocol(v) for v in versions):
         raise ValueError('Protocoles LLM absents/incompatibles/mélangés')
     return next(iter(versions))
 

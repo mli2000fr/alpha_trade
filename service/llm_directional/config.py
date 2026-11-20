@@ -7,6 +7,7 @@ from .protections import ProtectionProfile
 @dataclass(frozen=True)
 class FilterConfig:
     enabled: bool = False
+    manual_opt_in_allowed: bool = True  # Explicit UI opt-in, independent of scheduled default.
     provider: str = 'openai'  # Absent in archived runs: preserve GPT semantics.
     model: str = 'gpt-6.1-sol'
     api_key_env: str = 'OPENAI_API_KEY'
@@ -58,8 +59,8 @@ class FilterConfig:
     evidence_context_max_age_minutes: int = 30
 
     def __post_init__(self):
-        if self.scoring_mode not in ('legacy_confidence', 'direction_1_10'):
-            raise ValueError('scoring_mode : legacy_confidence | direction_1_10')
+        if self.scoring_mode not in ('legacy_confidence', 'direction_1_10', 'long_without_stop_probability'):
+            raise ValueError('scoring_mode : legacy_confidence | direction_1_10 | long_without_stop_probability')
         if type(self.separate_trend_evidence) is not bool:
             raise ValueError('separate_trend_evidence doit être booléen')
         if self.separate_trend_evidence and self.scoring_mode != 'direction_1_10':
@@ -94,6 +95,8 @@ class FilterConfig:
                 raise ValueError(f'{name}: entier entre {minimum} et {maximum} requis')
         if type(self.enabled) is not bool:
             raise ValueError('enabled doit être booléen')
+        if type(self.manual_opt_in_allowed) is not bool:
+            raise ValueError('manual_opt_in_allowed doit être booléen')
         for name in ('allow_long', 'allow_short'):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f'{name} doit être booléen')

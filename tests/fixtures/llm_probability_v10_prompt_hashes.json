@@ -1,0 +1,25 @@
+{
+  "context": {
+    "analysis_protocol": "oracle-long-no-stop-probability-v10",
+    "analysis_mode": "web_search",
+    "symbol": "ABC",
+    "issuer_reference": {
+      "company_name": "Example issuer"
+    },
+    "horizon_sessions": 10,
+    "evidence_cutoff_utc": "2026-11-20T07:45:10+00:00",
+    "long_without_stop_contract": {
+      "horizon_sessions": 10,
+      "stop_loss_pct": 0.05,
+      "exit_session": 11
+    }
+  },
+  "prompts": {
+    "cloud.oracle_directional.v10.web_search": "4a19d47433695d3051ae1af9df5ee4d94a212a133c4f7da96a5af8cfdffedbf0",
+    "cloud.oracle_directional.output.v10": "b9f6fe53a04b051474a0b3953122c033531188eecbda243cab4b695e7cc19e83"
+  },
+  "requests": {
+    "openai": "7646dc0d2c75b066cf07d9ee22d1549dffbd9ffc97d424a75843b213f3665a60",
+    "deepseek": "9fe9f25c7dedfc67a29fe0bc7330fb874565574f4632fbd90298384df85194ac"
+  }
+}

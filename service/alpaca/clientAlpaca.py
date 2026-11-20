@@ -333,7 +333,8 @@ def fetch_latest_quotes(
         return {}
 
     owned_session = session is None
-    client = session or requests.Session()
+    from common.verified_http import verified_session
+    client = session if session is not None else verified_session()
     _telemetry_bump("alpaca", "requests_total")
     try:
         response = request_with_retry(

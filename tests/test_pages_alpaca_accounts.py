@@ -12,6 +12,18 @@ def test_format_currency_handles_invalid_values() -> None:
     assert alpaca_accounts._format_currency(None) == "—"
 
 
+def test_positions_display_converts_broker_ratios_without_changing_raw_values():
+    import pandas as pd
+    source=pd.DataFrame(dict(symbol=['FLEX'],side=['long'],qty=['13'],avg_entry_price=['72.329231'],
+        current_price=['66.67'],market_value=['866.71'],unrealized_pl=['-73.57'],unrealized_plpc=['-0.07824'],
+        asset_marginable=[True],asset_shortable=[False]))
+    display=alpaca_accounts._positions_display_frame(source)
+    assert round(display.iloc[0].unrealized_plpc,3)==-7.824
+    assert display.iloc[0].qty==13 and display.iloc[0].asset_marginable=='Oui'
+    assert display.iloc[0].asset_shortable=='Non' and display.iloc[0].side=='LONG — achat'
+    assert source.iloc[0].unrealized_plpc=='-0.07824' and source.iloc[0].qty=='13'
+
+
 def test_ihm_brokers_page_failover_doctrine() -> None:
     summary = {
         "primary_broker": "alpaca",

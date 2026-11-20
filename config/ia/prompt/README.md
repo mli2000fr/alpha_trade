@@ -12,6 +12,11 @@ modèle.** Le prompt actuel reste donc sous `cloud/`, même sans recherche Web.
 
 ## Fichiers courants du filtre après Oracle
 
+- `cloud/oracle_directional/v12/web_search.txt` et `output/v12.txt` : parcours
+  Q051/B, trois probabilités en français (hausse sans SL, touche du SL,
+  hausse finale hypothétique), recherche Web et validation humaine.
+- `v10` et `v11` : anciennes analyses de probabilité conjointe uniquement,
+  conservées sans modification pour relire leurs archives.
 - `cloud/oracle_directional/v9/local_data_only.txt` : analyse cloud sur données locales seules.
 - `cloud/oracle_directional/v9/web_search.txt` : analyse cloud avec recherche Web et données locales.
 - `cloud/oracle_directional/output/v9.txt` : consigne finale du format de réponse.

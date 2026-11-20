@@ -80,6 +80,8 @@ oracle_backtest:
   stop_loss_pct: 0.10
 
 us_pipeline:
+  gpt_filter_enabled: true  # true = filtre GPT/DeepSeek après le classement LONG ; défaut partagé avec la page Pipeline.
+  gpt_require_qualified_evidence_for_manual_selection: false  # false = choix humain autorisé malgré preuves partielles ; validité, identité, expiration et risque maintenus.
   # Ancien profil PAPER : TOP10% Oracle H10 -> TOP5 LONG, score>0.50/AUC>=0.50,
   # SL5/open11, budget covariance 60 séances vol20 + SPY>0.98*SMA200.
   # Prioritaire sur options/GPT et les presets du risque pour ce batch seulement.
@@ -134,8 +136,9 @@ llm_directional_filter:
   separate_trend_evidence: true  # v9 : tendance 1–10 ou indéterminable, preuves et sélection séparées.
   long_score_threshold: 7  # LONG si score strictement supérieur à ce seuil.
   short_score_threshold: 4  # SHORT si score strictement inférieur à ce seuil ; entre les deux : neutre.
-  analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
-  # Le LLM évalue une tendance LONG/SHORT/ABSTAIN sur horizon, sans objectif TP/SL.
+  analysis_mode: web_search  # Probabilité LONG sans SL : Web + données locales, uniquement si le filtre est activé.
+  # B/Q051 : probabilité de hausse sans toucher le SL Winner + validation humaine (v10).
+  # Les anciens parcours de tendance conservent leurs seuils ci-dessus.
   consensus_max_periods: 4
   consensus_history_count: 3
   consensus_max_age_days: 7
@@ -155,7 +158,8 @@ llm_directional_filter:
   evidence_fundamental_max_period_age_days: 200
   evidence_context_max_age_minutes: 30  # Bloque un appel trop tardif ; pas de refresh implicite à mi-run.
   # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
-  enabled: false  # Filtrage GPT/DeepSeek désactivé dans l'IHM et le batch us_pipeline.
+  enabled: false  # Défaut désactivé ; le batch planifié reste sans GPT.
+  manual_opt_in_allowed: true  # Autorise à cocher explicitement le filtre dans l'IHM, pour ce lancement seulement.
   provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
   # DeepSeek Web : Search/Fetch + analyse DeepSeek natifs, seule DEEPSEEK_API_KEY nécessaire.
   model: gpt-6-luna

@@ -471,7 +471,7 @@ def _session_state_bool(key: str, default: bool) -> bool:
 
 
 def _render_llm_filter_toggle(config) -> bool:
-    """The global switch overrides a checkbox retained by an older UI session."""
+    """Standard route switch; Q051's explicit post-ranking opt-in is separate."""
     key = 'pipeline_llm_filter_enabled'
     if not config.enabled:
         st.session_state[key] = False
@@ -484,7 +484,8 @@ def _render_llm_filter_toggle(config) -> bool:
              'Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention. '
              'Aucun gain démontré.')
     if not config.enabled:
-        st.caption('Filtrage GPT/DeepSeek désactivé dans config.yaml : aucun appel LLM dans le pipeline ni us_pipeline.')
+        st.caption('Filtre LLM standard désactivé dans config.yaml. Pour B/Q051, le mode « configuration du batch us_pipeline » '
+                   'propose une option manuelle distincte après le classement LONG ; elle ne modifie pas le batch planifié.')
     return bool(config.enabled and selected)
 
 

@@ -92,6 +92,9 @@ class WinnerCampaignRuntime:
         if self.state['status'] in ('CLOSED','EXPIRED','CANCELED'):
             return
         self.rearm_failed_exit()
+        if self.state.get('manual_review'):
+            from execution_engine.winner_protection_recovery import recover_rejected
+            recover_rejected(self)
         self.protect()
         self.reconcile_lots()
         if (self.state['policy']['confirmation_bars'] == 0
@@ -105,7 +108,7 @@ class WinnerCampaignRuntime:
             self.reconcile()
             self.protect()
         if self.pending():
-            if any(o['action'] == 'EXIT' and o['status'] in ('RESERVED', 'UNKNOWN') for o in self.pending()):
+            if any(o['action'] in ('EXIT','STOP_EXIT') and o['status'] in ('RESERVED', 'UNKNOWN') for o in self.pending()):
                 raise ValueError('Horizon sell response unknown after protection cancel; urgent broker reconciliation required')
             return
         if self.state['lots'] and not any(l['remaining'] for l in self.state['lots']):
@@ -257,9 +260,11 @@ class WinnerCampaignRuntime:
                 elif raw.get('status') in TERMINAL:
                     operation['status'] = 'MANUAL_REVIEW'
                     raise ValueError('Emergency rearm rejected; held position needs immediate operator action')
-            elif operation['action'] == 'EXIT':
+            elif operation['action'] in ('EXIT','STOP_EXIT'):
                 self.book_sell(operation, raw)
-            if operation['action'] in ('ENTRY', 'ADD', 'EXIT'):
+                if operation['action']=='STOP_EXIT' and raw.get('status') in TERMINAL-{'filled'}:
+                    self.state['manual_review']='Protective exit terminated without full fill; reconciliation required'
+            if operation['action'] in ('ENTRY', 'ADD', 'EXIT','STOP_EXIT'):
                 operation['status'] = 'DONE' if raw.get('status') in TERMINAL else 'SUBMITTED'
             if (operation['action']=='ENTRY' and raw.get('status') in TERMINAL
                     and float(raw.get('filled_qty') or 0)==0 and not self.state['lots']):
@@ -362,17 +367,24 @@ class WinnerCampaignRuntime:
     def protect(self):
         if self.state.get('manual_review'):
             raise ValueError(self.state['manual_review'])
+        from execution_engine.winner_protection_recovery import finish_partial_buys,exit_breached_unprotected,rejection_detail
+        if any(l['remaining'] and not l['stop_order_id'] for l in self.state['lots']):
+            if not finish_partial_buys(self):return
+            if exit_breached_unprotected(self):return
         for i, lot in enumerate(self.state['lots']):
             if not lot['remaining'] or lot['stop_order_id']:
                 continue
-            if any(o.get('lot_index') == i and o['action'] == 'PROTECT' for o in self.state['operations']):
+            prior=[o for o in self.state['operations'] if o.get('lot_index')==i and o['action']=='PROTECT']
+            if any(o['status']!='REJECTED_CONFIRMED' for o in prior):
                 return  # Never repeat a protection POST with an unknown response.
+            if len(prior)>=2:raise ValueError('Protection recovery attempts exhausted; operator review required')
             parent_operation = next(o for o in self.state['operations']
                 if o.get('intent', {}).get('intent_id') == lot['parent_intent_id'])
             parent = OrderIntent(**parent_operation['intent'])
-            stop = make_intent(self.state, lot['parent_id']+'-sl', quantity=lot['remaining'], side='sell',
+            suffix=('-recovery-'+str(len(prior))) if prior else ''
+            stop = make_intent(self.state, lot['parent_id']+'-sl'+suffix, quantity=lot['remaining'], side='sell',
                 role=IntentRole.INITIAL_STOP, order_type='stop', stop=lot['stop'], parent=parent.intent_id)
-            tp = (make_intent(self.state, lot['parent_id']+'-tp', quantity=lot['remaining'], side='sell',
+            tp = (make_intent(self.state, lot['parent_id']+'-tp'+suffix, quantity=lot['remaining'], side='sell',
                 role=IntentRole.TAKE_PROFIT, order_type='limit', price=lot['tp'], parent=parent.intent_id)
                 if lot['tp'] else None)
             operation = self.reserve('PROTECT', tp or stop, lot_index=i, stop_intent=asdict(stop))
@@ -382,7 +394,7 @@ class WinnerCampaignRuntime:
                 from service.alpaca.trading_client import BrokerApiError
                 if (isinstance(exc,BrokerApiError) and 400<=exc.status_code<500
                         and exc.status_code!=429 and 'client_order_id' not in str(exc.body)):
-                    operation.update(status='MANUAL_REVIEW',definitive_rejection=str(exc)[:300])
+                    operation.update(status='MANUAL_REVIEW',definitive_rejection=str(exc)[:300],broker_rejection=rejection_detail(exc))
                     self.state['manual_review']='Protective order definitively rejected; held position requires immediate reconciliation: '+str(exc)[:300]
                     self.save()
                 raise  # Ambiguous responses remain reserved; never repeat the POST blindly.
@@ -520,7 +532,11 @@ class WinnerCampaignRuntime:
         delta = cumulative-operation['booked_quantity']
         if not delta.is_integer() or delta < 0 or delta > sum(l['remaining'] for l in self.state['lots']):
             raise ValueError('Invalid cumulative deadline quantity')
-        for lot in self.state['lots']:
+        indices=operation.get('lot_indices',list(range(len(self.state['lots']))))
+        if cumulative-operation['booked_quantity']>sum(self.state['lots'][i]['remaining'] for i in indices):
+            raise ValueError('Protective exit exceeds its exact remaining lots')
+        for i in indices:
+            lot=self.state['lots'][i]
             used = min(int(delta), lot['remaining'])
             if used:
                 self.apply_lot_sale(lot, dict(raw, filled_qty=lot['sell_seen'].get(raw['id'], 0)+used))

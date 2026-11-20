@@ -1,4 +1,4 @@
-"""Versioned v5-v9 local/Web prompts; historical request contracts stay immutable."""
+"""Versioned local/Web prompts; historical request contracts stay immutable."""
 from copy import deepcopy
 from common.ia_prompts import load_prompt
 
@@ -7,6 +7,13 @@ DEEPSEEK_SEARCH_VERSION='oracle-deepseek-search-trend-v6'
 FRESH_VERSION='oracle-fresh-evidence-trend-v7'
 SCORE_VERSION='oracle-fresh-evidence-direction-score-v8'
 TREND_EVIDENCE_VERSION='oracle-direction-evidence-v9'
+PROBABILITY_VERSION='oracle-long-no-stop-probability-v10'
+PROBABILITY_FR_VERSION='oracle-long-no-stop-probability-v11'
+PROBABILITY_BREAKDOWN_VERSION='oracle-long-probabilities-v12'
+
+
+def probability_protocol(version):
+    return version in (PROBABILITY_VERSION,PROBABILITY_FR_VERSION,PROBABILITY_BREAKDOWN_VERSION)
 
 
 def score_protocol(version):
@@ -14,15 +21,15 @@ def score_protocol(version):
 
 
 def fresh_protocol(version):
-    return version in (FRESH_VERSION, SCORE_VERSION, TREND_EVIDENCE_VERSION)
+    return version in (FRESH_VERSION, SCORE_VERSION, TREND_EVIDENCE_VERSION) or probability_protocol(version)
 
 
 def has_local_evidence(context):
-    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION)
+    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION) or probability_protocol(context.get('analysis_protocol'))
 
 
 def native_search_protocol(version):
-    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION)
+    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION) or probability_protocol(version)
 
 
 def schema(base):
@@ -37,7 +44,8 @@ def schema(base):
 
 def instructions(mode,version=None):
     versions = {VERSION:'v5', DEEPSEEK_SEARCH_VERSION:'v6', FRESH_VERSION:'v7',
-                SCORE_VERSION:'v8', TREND_EVIDENCE_VERSION:'v9'}
+                SCORE_VERSION:'v8', TREND_EVIDENCE_VERSION:'v9', PROBABILITY_VERSION:'v10',PROBABILITY_FR_VERSION:'v11',
+                PROBABILITY_BREAKDOWN_VERSION:'v12'}
     version_key = versions.get(version,'v5')
     mode_key = 'local_data_only' if mode=='local_data_only' else 'web_search'
     return load_prompt(f'cloud.oracle_directional.{version_key}.{mode_key}',runtime='cloud')
@@ -63,12 +71,21 @@ def response_schema(base,version=None):
         value['properties']['evidence_quality']={'type':'string','enum':['SUFFICIENT','PARTIAL','INSUFFICIENT']}
         value['properties']['evidence_explanation']={'type':'string'}
         value['required']+=['trend_status','evidence_quality','evidence_explanation']
+    if probability_protocol(version):
+        from .probability import probability_schema
+        return probability_schema(value,breakdown=version==PROBABILITY_BREAKDOWN_VERSION)
     return value
 
 
 def output_policy(context, config):
     version = context.get('analysis_protocol')
-    if version == TREND_EVIDENCE_VERSION:
+    if version == PROBABILITY_BREAKDOWN_VERSION:
+        key = 'v12'
+    elif version == PROBABILITY_FR_VERSION:
+        key = 'v11'
+    elif version == PROBABILITY_VERSION:
+        key = 'v10'
+    elif version == TREND_EVIDENCE_VERSION:
         key = 'v9'
     elif version == SCORE_VERSION:
         key = 'v8'

@@ -43,6 +43,9 @@ def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment
     panel_calls: list[tuple[bool, dict[str, list[dict[str, object]]], list[dict[str, object]], dict[str, dict[str, object]]]] = []
     render_markers: list[str] = []
 
+    # This test covers the explicitly customized page, preserved alongside the
+    # new default shared-batch view.
+    monkeypatch.setattr(pipeline.st, "checkbox", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline.st, "header", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "subheader", lambda value, *args, **kwargs: render_markers.append(str(value)))

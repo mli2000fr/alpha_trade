@@ -1,5 +1,6 @@
 """Read-only review table with a real per-row Graphique button (no DOM hacks)."""
 from datetime import date, datetime
+import hashlib
 import math
 
 import pandas as pd
@@ -30,8 +31,9 @@ button:focus-visible {outline:2px solid var(--st-primary-color,#f44);outline-off
 
 JS = """
 export default function(component) {
- const {data, parentElement, setTriggerValue} = component;
+ const {data, parentElement, setTriggerValue, setStateValue} = component;
  const root = parentElement.querySelector('.review-table-root');
+ if(!root.reviewChecked) root.reviewChecked=new Set(data.selected_symbols || []);
  function draw() {
   const scrollLeft=root.scrollLeft, scrollTop=root.scrollTop;
   root.replaceChildren();
@@ -40,7 +42,7 @@ export default function(component) {
   const state=root.reviewSort;
   data.columns.forEach((col,index)=>{
    const th=document.createElement('th');
-   if(col.action) {th.textContent='Graphique';}
+   if(col.action || col.checkbox) {th.textContent=col.label;}
    else {
     const button=document.createElement('button'); button.className='sort'; button.type='button';
     button.textContent=col.label+(state?.index===index ? (state.asc ? ' ↑' : ' ↓') : '');
@@ -61,10 +63,18 @@ export default function(component) {
    const tr=document.createElement('tr');
    data.columns.forEach((col,index)=>{
     const td=document.createElement('td');
-    if(col.action) {
+    if(col.checkbox) {
+     const checkbox=document.createElement('input');checkbox.type='checkbox';
+     checkbox.checked=root.reviewChecked.has(row.symbol);checkbox.disabled=Boolean(data.read_only);
+     checkbox.setAttribute('aria-label','Retenir '+row.symbol);
+     checkbox.onchange=()=>{
+      if(checkbox.checked)root.reviewChecked.add(row.symbol);else root.reviewChecked.delete(row.symbol);
+      setStateValue('selected_symbols',Array.from(root.reviewChecked));
+     };td.appendChild(checkbox);
+    } else if(col.action) {
      const button=document.createElement('button'); button.type='button';button.className='graph';button.textContent='📈 Voir';
      button.setAttribute('aria-label','Afficher le graphique de '+row.symbol);
-     button.title='Afficher les barres de '+row.symbol;
+     button.title=col.title || 'Afficher les barres de '+row.symbol;
      button.onclick=()=>setTriggerValue('open_symbol',row.symbol);td.appendChild(button);
     } else {
      td.textContent=row.cells[index].text;td.title=row.cells[index].text;
@@ -80,15 +90,18 @@ export default function(component) {
 """
 
 @st.cache_resource
-def _registered_table_component():
+def _registered_table_component(js=JS,css=CSS):
     # Register once in the active app runtime, not during a bare-module import.
-    return component('prediction_review_with_graphs',
+    # Include frontend contents in both caches: a running app may otherwise keep
+    # the old read-only renderer after checkbox support is deployed.
+    version=hashlib.sha256((js+'\0'+css).encode('utf-8')).hexdigest()[:12]
+    return component('prediction_review_with_graphs_'+version,
         html='<div class="review-table-root" role="region" aria-label="Tableau de résultats et graphiques" tabindex="0"></div>',
-        css=CSS,js=JS,isolate_styles=True)
+        css=css,js=js,isolate_styles=True)
 
 
 def _table_component(**kwargs):
-    return _registered_table_component()(**kwargs)
+    return _registered_table_component(JS,CSS)(**kwargs)
 
 
 def _cell(value, column):

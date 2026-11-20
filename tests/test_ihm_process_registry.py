@@ -338,6 +338,35 @@ def test_before_execution_hook_runs_after_risk_and_can_block_orders(monkeypatch,
     assert 'Watcher heartbeat absent' in registry.read_pipeline_logs(record.run_id, 'all') if watcher_fails else True
 
 
+@pytest.mark.parametrize('expired',[False,True])
+def test_human_gate_precedes_risk_child_and_expiry_does_not_claim_risk_started(monkeypatch,tmp_path,expired):
+    _configure_tmp_storage(monkeypatch,tmp_path)
+    steps=(PipelineStepDefinition('ml_predict','10','Predict','','','—'),
+           PipelineStepDefinition('risk_management','11','Risk','','','ml_predict'),
+           PipelineStepDefinition('execution','12','Execution','','','risk_management'))
+    monkeypatch.setattr(registry,'get_pipeline_workflow_steps',lambda **kw:steps)
+    launched=[]
+    def command(step,options):
+        launched.append(step)
+        return [sys.executable,'-c','print("test only")']
+    monkeypatch.setattr(registry,'build_pipeline_command',command)
+    def prepare(step,options,event):
+        if step.key!='risk_management':return
+        assert launched==['ml_predict']
+        current=next(iter(registry._ACTIVE_WORKFLOWS.values())).record
+        assert current.workflow_current_step_key=='ml_predict'
+        if expired:raise ValueError('Analyse expirée : lancer un nouveau batch ou pipeline')
+        return dict(status='HUMAN_SELECTION_VALIDATED')
+    record=registry.start_pipeline_workflow(PipelineLaunchOptions(),before_step=prepare)
+    result=_wait_for_final_snapshot(record.run_id)
+    assert result['status']==('failed' if expired else 'completed')
+    assert launched==(['ml_predict'] if expired else ['ml_predict','risk_management','execution'])
+    assert result['workflow_completed_steps']==(1 if expired else 3)
+    if expired:
+        assert result['workflow_current_step_key'] is None  # terminal record clears its current step.
+        assert 'nouveau batch ou pipeline' in registry.read_pipeline_logs(record.run_id,'all')
+
+
 def test_pipeline_workflow_aggregates_child_run_summaries(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 
