@@ -30,8 +30,9 @@ button:focus-visible {outline:2px solid var(--st-primary-color,#f44);outline-off
 
 JS = """
 export default function(component) {
- const {data, parentElement, setTriggerValue} = component;
+ const {data, parentElement, setTriggerValue, setStateValue} = component;
  const root = parentElement.querySelector('.review-table-root');
+ if(!root.reviewChecked) root.reviewChecked=new Set(data.selected_symbols || []);
  function draw() {
   const scrollLeft=root.scrollLeft, scrollTop=root.scrollTop;
   root.replaceChildren();
@@ -40,7 +41,7 @@ export default function(component) {
   const state=root.reviewSort;
   data.columns.forEach((col,index)=>{
    const th=document.createElement('th');
-   if(col.action) {th.textContent='Graphique';}
+   if(col.action || col.checkbox) {th.textContent=col.label;}
    else {
     const button=document.createElement('button'); button.className='sort'; button.type='button';
     button.textContent=col.label+(state?.index===index ? (state.asc ? ' ↑' : ' ↓') : '');
@@ -61,10 +62,18 @@ export default function(component) {
    const tr=document.createElement('tr');
    data.columns.forEach((col,index)=>{
     const td=document.createElement('td');
-    if(col.action) {
+    if(col.checkbox) {
+     const checkbox=document.createElement('input');checkbox.type='checkbox';
+     checkbox.checked=root.reviewChecked.has(row.symbol);checkbox.disabled=Boolean(data.read_only);
+     checkbox.setAttribute('aria-label','Retenir '+row.symbol);
+     checkbox.onchange=()=>{
+      if(checkbox.checked)root.reviewChecked.add(row.symbol);else root.reviewChecked.delete(row.symbol);
+      setStateValue('selected_symbols',Array.from(root.reviewChecked));
+     };td.appendChild(checkbox);
+    } else if(col.action) {
      const button=document.createElement('button'); button.type='button';button.className='graph';button.textContent='📈 Voir';
      button.setAttribute('aria-label','Afficher le graphique de '+row.symbol);
-     button.title='Afficher les barres de '+row.symbol;
+     button.title=col.title || 'Afficher les barres de '+row.symbol;
      button.onclick=()=>setTriggerValue('open_symbol',row.symbol);td.appendChild(button);
     } else {
      td.textContent=row.cells[index].text;td.title=row.cells[index].text;

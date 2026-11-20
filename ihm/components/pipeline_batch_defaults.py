@@ -176,7 +176,7 @@ def render_selection(view):
     """Display the actual sealed daily selection, not the bundle's generic defaults."""
     if not view.options.q051_paper_enabled:
         return
-    from service.q051_paper.pipeline import ARTIFACTS, digest
+    from service.q051_paper.pipeline import ARTIFACTS
     opts = view.options
     matches = []
     for path in ARTIFACTS.glob('q051-*/selection.json'):
@@ -188,70 +188,51 @@ def render_selection(view):
         except (OSError, ValueError):
             continue
     with st.expander('10. ML Predict — sélection du parcours quotidien', expanded=True):
-        if not matches:
-            st.info(f'Aucune sélection quotidienne terminée pour la séance {opts.trade_date} et ce profil.')
-            return
-        matches.sort(key=lambda item:item[0],reverse=True)
-        # A batch may still be waiting after midnight; its exact dated proposal
-        # must remain selectable even though today's launch preview has changed.
-        index=st.selectbox('Sélection du parcours à consulter',range(len(matches)),
-            format_func=lambda i:f'{matches[i][2]["trade_date"]} · {matches[i][2]["run_id"]}',
-            key='pipeline_us_defaults_proposal') if len(matches)>1 else 0
-        _, path, record = matches[index]
-        try:
-            seal = json.loads((path.parent/'seal.json').read_text(encoding='utf-8'))
-            if (seal['report_sha256'] != digest(path)
-                    or record['selection_sha256'] != digest(path.parent/'selection.parquet')):
-                raise ValueError('Empreinte de la sélection incompatible')
-            import pandas as pd
-            frame = pd.read_parquet(path.parent/'selection.parquet')
-            st.caption(f'Sélection archivée : {record["run_id"]} · séance {record["trade_date"]} · cutoff {record["cutoff"]}. '
-                       'Retenu ne signifie ni approuvé par le risque, ni acheté.')
-            oracle_score = 'proba_extreme' if 'proba_extreme' in frame else 'oracle_score'
-            names = {'symbol':'Symbole', 'oracle_rank':'Rang Oracle', oracle_score:'Score Oracle',
-                     'long_probability':'Score LONG', 'long_auc':'AUC LONG',
-                     'rank':'Rang LONG', 'selected':'Retenu', 'reason':'Motif'}
-            if record.get('llm_filter'):
-                names.update(llm_direction_score='Score GPT/DeepSeek /10', llm_decision='Avis LLM',
-                             llm_evidence_quality='Qualité des preuves LLM', llm_blockers='Motifs LLM')
-                info = record['llm_filter']
-                st.caption(f'Filtre LLM : {info.get("run_id") or "aucun candidat à analyser"} · '
-                           f'H{info["horizon"]} · {len(info["selected"])} retenu(s) sur {info["requested"]}.')
-            from service.llm_directional.prompts import PROBABILITY_VERSION
-            if record.get('llm_filter',{}).get('protocol')==PROBABILITY_VERSION:
-                from ihm.components.probability_selection import render as render_probability
-                render_probability(path.parent,record,frame)
-            else:
-                st.dataframe(frame[[k for k in names if k in frame]].rename(columns=names),
-                             hide_index=True, use_container_width=True)
-        except (OSError, ValueError, KeyError) as exc:
-            st.warning(f'Sélection archivée indisponible : {exc}')
-            return
-    with st.expander('11. Risk Management — décisions par compte', expanded=False):
-        accounts = (opts.account_id or 'default', *view.other_accounts)
-        account = st.selectbox('Compte à consulter', accounts, key='pipeline_us_defaults_review_account')
-        folder = path.parent/'accounts'/account
-        try:
-            risk_path = folder/'risk.json'
-            if not risk_path.is_file():
-                st.info(f'Aucune décision du risque publiée pour {account} et cette sélection.')
-                return
-            risk = json.loads(risk_path.read_text(encoding='utf-8'))
-            seal = json.loads((folder/'risk.seal.json').read_text(encoding='utf-8'))
-            if (seal['risk_sha256'] != digest(risk_path)
-                    or risk['selection_sha256'] != digest(path)
-                    or risk['q051_run_id'] != record['run_id'] or risk['account_id'] != account):
-                raise ValueError('Décisions du risque incompatibles avec la sélection affichée')
-            decisions = pd.DataFrame(risk['decisions'])
-            st.caption(f'Risque archivé : {risk["risk_run_id"]} · capital {risk["equity"]:,.2f} $ · '
-                       f'{risk["approved_count"]} approuvé(s), {risk["rejected_count"]} refusé(s). '
-                       'Une approbation du risque ne prouve pas un remplissage broker.')
-            if decisions.empty:
-                st.info('Aucune cible de risque pour cette sélection.')
-                return
-            names = {'symbol':'Symbole','decision':'Décision','reason':'Motif','approved_shares':'Quantité',
-                     'entry_price':'Prix de référence','target_notional':'Montant cible','score_used':'Score LONG'}
-            st.dataframe(decisions[[k for k in names if k in decisions]].rename(columns=names),
+        from ihm.components.probability_selection import render_demo
+        render_demo()
+        path,record=_render_archived_prediction(matches,opts)
+    from ihm.components.pipeline_batch_results import render_account_stages
+    render_account_stages(view,path,record)
+
+
+def _render_archived_prediction(matches,opts):
+    from service.q051_paper.pipeline import digest
+    if not matches:
+        st.info(f'Aucune sélection quotidienne terminée pour la séance {opts.trade_date} et ce profil.')
+        return None,None
+    matches.sort(key=lambda item:item[0],reverse=True)
+    # Keep the exact dated proposal accessible when approval crosses midnight.
+    index=st.selectbox('Sélection du parcours à consulter',range(len(matches)),
+        format_func=lambda i:f'{matches[i][2]["trade_date"]} · {matches[i][2]["run_id"]}',
+        key='pipeline_us_defaults_proposal') if len(matches)>1 else 0
+    _,path,record=matches[index]
+    try:
+        seal=json.loads((path.parent/'seal.json').read_text(encoding='utf-8'))
+        if (seal['report_sha256']!=digest(path)
+                or record['selection_sha256']!=digest(path.parent/'selection.parquet')):
+            raise ValueError('Empreinte de la sélection incompatible')
+        import pandas as pd
+        frame=pd.read_parquet(path.parent/'selection.parquet')
+        st.caption(f'Sélection archivée : {record["run_id"]} · séance {record["trade_date"]} · cutoff {record["cutoff"]}. '
+                   'Retenu ne signifie ni approuvé par le risque, ni acheté.')
+        oracle_score='proba_extreme' if 'proba_extreme' in frame else 'oracle_score'
+        names={'symbol':'Symbole','oracle_rank':'Rang Oracle',oracle_score:'Score Oracle',
+               'long_probability':'Score LONG','long_auc':'AUC LONG',
+               'rank':'Rang LONG','selected':'Retenu','reason':'Motif'}
+        if record.get('llm_filter'):
+            names.update(llm_direction_score='Score GPT/DeepSeek /10',llm_decision='Avis LLM',
+                         llm_evidence_quality='Qualité des preuves LLM',llm_blockers='Motifs LLM')
+            info=record['llm_filter']
+            st.caption(f'Filtre LLM : {info.get("run_id") or "aucun candidat à analyser"} · '
+                       f'H{info["horizon"]} · {len(info["selected"])} évaluable(s) sur {info["requested"]}.')
+        from service.llm_directional.prompts import PROBABILITY_VERSION
+        if record.get('llm_filter',{}).get('protocol')==PROBABILITY_VERSION:
+            from ihm.components.probability_selection import render as render_probability
+            render_probability(path.parent,record,frame)
+        else:
+            st.dataframe(frame[[k for k in names if k in frame]].rename(columns=names),
                          hide_index=True,use_container_width=True)
-        except (OSError,ValueError,KeyError) as exc:
-            st.warning(f'Décisions du risque indisponibles : {exc}')
+        return path,record
+    except (OSError,ValueError,KeyError) as exc:
+        st.warning(f'Sélection archivée indisponible : {exc}')
+        return None,None

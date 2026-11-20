@@ -168,6 +168,7 @@ def test_daily_selection_display_requires_matching_seals(default_view, monkeypat
     (folder/'seal.json').write_text(json.dumps(dict(report_sha256=pipeline.digest(folder/'selection.json'))))
     account_folder=folder/'accounts'/'default';account_folder.mkdir(parents=True)
     risk=dict(risk_run_id='risk-example',q051_run_id=folder.name,account_id='default',equity=4000.,
+              trade_date=report['trade_date'],
               selection_sha256=pipeline.digest(folder/'selection.json'),approved_count=1,rejected_count=0,
               decisions=[dict(symbol='EXAMPLE',decision='APPROVED',approved_shares=4,entry_price=100.,target_notional=400.)])
     (account_folder/'risk.json').write_text(json.dumps(risk))
@@ -175,14 +176,18 @@ def test_daily_selection_display_requires_matching_seals(default_view, monkeypat
     monkeypatch.setattr(ui,'load_defaults',lambda:default_view)
     source='''
 from ihm.components.pipeline_batch_defaults import render_selection,load_defaults
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
 render_selection(load_defaults())
 '''
     app=AppTest.from_string(source).run(timeout=30)
     assert not app.exception
+    demo=json.loads(app.get('bidi_component')[0].proto.json)
+    assert [r['symbol'] for r in demo['rows']]==['AAPL','MSFT','NVDA']
     assert app.dataframe[0].value.iloc[0]['Symbole']=='EXAMPLE'
     assert app.dataframe[0].value.iloc[0]['Score Oracle']==.9
     assert app.dataframe[1].value.iloc[0]['Quantité']==4
     frame.assign(long_probability=.99).to_parquet(folder/'selection.parquet')
     app.run(timeout=30)
-    assert not app.exception and not app.dataframe
+    assert not app.exception and not app.dataframe  # demo component remains; altered real selection is hidden.
     assert any('Empreinte' in w.value for w in app.warning)

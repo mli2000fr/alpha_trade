@@ -115,12 +115,14 @@ def test_ui_displays_probability_sorted_checkboxes_without_automatic_choice(prop
     monkeypatch.setattr(ui,'_test_proposal',proposal,raising=False)
     app=AppTest.from_string('''
 from ihm.components.probability_selection import render,_test_proposal
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
 render(*_test_proposal)
 ''').run(timeout=30)
     assert not app.exception
-    data=app.dataframe[0].value
-    assert data.Symbole.tolist()==['B','A','C']
-    assert not data.Retenir.any()
+    data=json.loads(app.get('bidi_component')[0].proto.json)
+    assert [r['symbol'] for r in data['rows']]==['B','A','C']
+    assert data['selected_symbols']==[]
     assert any(button.label=='Valider la sélection' for button in app.button)
     assert not human.approval_path(folder).exists()
     monkeypatch.setattr('ihm.services.db.get_engine',lambda:None)
@@ -140,13 +142,44 @@ def test_pending_proposal_stays_visible_after_calendar_rollover(proposal,monkeyp
     monkeypatch.setattr(ui,'load_defaults',lambda:view)
     app=AppTest.from_string('''
 from ihm.components.pipeline_batch_defaults import render_selection,load_defaults
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
 render_selection(load_defaults())
 ''').run(timeout=30)
     assert not app.exception
-    assert app.dataframe[0].value.Symbole.tolist()==['B','A','C']
+    data=json.loads(app.get('bidi_component')[1].proto.json)
+    assert [r['symbol'] for r in data['rows']]==['B','A','C']
     assert any('TOP Oracle — avis GPT / DeepSeek' in m.value for m in app.markdown)
     assert any('Validation possible jusqu’au' in c.value for c in app.caption)
     assert not human.approval_path(folder).exists()
+
+
+def test_demo_validation_never_publishes_real_approval_or_connects_to_sql(proposal,monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    folder,_,_=proposal
+    monkeypatch.setattr(human,'approve',lambda *a,**kw:pytest.fail('Demo must never approve a real run'))
+    monkeypatch.setattr('ihm.services.db.get_engine',lambda:pytest.fail('Demo must never access SQL'))
+    app=AppTest.from_string('''
+from ihm.components.probability_selection import render_demo
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
+render_demo()
+''').run(timeout=30)
+    assert not app.exception
+    payload=json.loads(app.get('bidi_component')[0].proto.json)
+    assert [r['symbol'] for r in payload['rows']]==['AAPL','MSFT','NVDA']
+    assert [r['cells'][3]['sort'] for r in payload['rows'][:2]]==pytest.approx([72.,58.])
+    assert payload['rows'][2]['cells'][3]['sort'] is None and payload['selected_symbols']==[]
+    assert any('DÉMONSTRATION' in w.value for w in app.warning)
+    states=app._tree.get_widget_states()
+    event=states.widgets.add();event.id=app.get('bidi_component')[0].proto.id
+    event.json_value=json.dumps({'selected_symbols':['AAPL','NVDA']})
+    app._run(states,timeout=30)
+    next(b for b in app.button if b.label=='Valider la sélection').click().run(timeout=30)
+    assert not app.exception and any('Aucun choix réel enregistré' in v.value for v in app.info)
+    assert any('choix : AAPL.' in v.value for v in app.info)
+    assert any('Exclus de la simulation' in v.value and 'NVDA' in v.value for v in app.warning)
+    assert not human.approval_path(folder).exists() and not (folder/'accounts').exists()
 
 
 def test_human_subset_is_bound_into_real_risk_and_execution(tmp_path,monkeypatch):

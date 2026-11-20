@@ -56,6 +56,25 @@ dates déclarées par les sources, pas une certification historique universelle.
 
 Le tableau de l'étape10 affiche les candidats par probabilité décroissante,
 avec une case **Retenir** par ligne, les explications et les limites des preuves.
+Dans le mode **Utiliser la configuration du batch us_pipeline**, les blocs
+**10, 11 et 12** restent visibles avant publication des résultats. Avec GPT ou
+DeepSeek actif, ils sont ouverts et affichent les états d'attente. Le compte
+choisi dans le bloc11 sert également au bloc12 ; risque et exécution sont liés
+à la sélection, au compte et à la séance exacts. Le bloc12 affiche le bilan de
+fin d'étape (ordres soumis et quantités exécutées constatées à cet instant),
+avec prix de référence et montant cible distingués d'un prix d'exécution.
+Cette consultation lit les archives locales sans appel broker ou fournisseur.
+La colonne **Courbe et analyse** contient un bouton **📈 Voir** par symbole.
+La fenêtre propose **1 mois / 6 mois / 1 an**, avec les barres journalières
+locales arrêtées à la séance analysée, et la réponse GPT/DeepSeek archivée :
+explications de probabilité, preuves, arguments favorables/défavorables,
+consensus, contexte, catalyseurs, risques et sources. La consultation conserve
+les cases cochées ; elle n'approuve aucun titre et ne déclenche aucun nouvel
+appel fournisseur. Si les barres sont absentes, l'analyse reste consultable.
+Un encart **Aperçu simulé — 3 réponses GPT fictives** montre le même tableau
+avec des valeurs illustratives AAPL/MSFT/NVDA. Ce mode reste uniquement en
+mémoire : son bouton ne publie aucune validation, ne contacte ni SQL ni le
+fournisseur et ne débloque aucun workflow. Fermer l'encart pour le masquer.
 Les cases sont initialement décochées. Une estimation absente ou des preuves
 non qualifiées ne peuvent pas être sélectionnées côté serveur, même si la
 case a été cochée. Aucun titre hors de la liste per-symbol n'est ajouté.
@@ -105,6 +124,13 @@ du risque avant choix humain, liaison choix/risque/exécution et partage entre
 comptes. Reçu : `artifacts/operations/llm_probability_20261120/tests-final.xml`.
 Aucun appel fournisseur payant, notification réelle ou ordre broker n'a été
 émis par ces tests. Ils ne mesurent pas la fiabilité des probabilités du LLM.
+
+Pour l'évolution **Courbe et analyse**, **191 tests ciblés passent**, dont le
+bouton intégré à chaque ligne, le tri avec conservation de l'identité du titre,
+les périodes 1/6/12 mois, la conservation des cases cochées après consultation,
+l'analyse disponible sans barres, la liaison à la proposition scellée et
+l'absence de validation d'achat lors de l'ouverture d'une fenêtre.
+Reçu : `artifacts/operations/llm_probability_20261120/tests-details-verified.xml`.
 
 Limite de l'environnement de test : deux tests historiques d'arrêt de processus
 de la suite complète du registre ne peuvent pas arrêter leur propre enfant via

@@ -88,6 +88,24 @@ graph(0).onclick(); assert.deepEqual(events.pop(),['open_symbol','FMC']);
 head().children[4].children[0].onclick();
 assert.equal(body().children[0].children[1].textContent,'FUN');
 graph(0).onclick(); assert.deepEqual(events.pop(),['open_symbol','FUN']);
+// Editable probability rows retain checkboxes by symbol, independent of sorting
+// and chart clicks. Inspecting a chart never changes the checked subset.
+const editable=structuredClone(PAYLOAD);editable.columns.at(-1).checkbox=true;
+editable.selected_symbols=['FUN'];
+const choiceRoot=new Element('div'),changes=[],opens=[];
+render({data:editable,parentElement:{querySelector:()=>choiceRoot},
+ setStateValue:(key,value)=>changes.push([key,value]),setTriggerValue:(key,value)=>opens.push([key,value])});
+const choiceBody=()=>choiceRoot.children[0].children[1];
+const choiceHead=()=>choiceRoot.children[0].children[0].children[0];
+const check=(i)=>choiceBody().children[i].children.at(-1).children[0];
+assert.equal(check(0).checked,true);assert.equal(check(1).checked,false);
+check(1).checked=true;check(1).onchange();
+assert.deepEqual(changes.pop(),['selected_symbols',['FUN','FMC']]);
+choiceHead().children[4].children[0].onclick();
+assert.equal(choiceBody().children[0].children[1].textContent,'FMC');
+assert.equal(check(0).checked,true);
+choiceBody().children[0].children[2].children[0].onclick();
+assert.deepEqual(opens.pop(),['open_symbol','FMC']);assert.equal(changes.length,0);
 '''.replace('SOURCE',json.dumps(table.JS)).replace('PAYLOAD',json.dumps(payload,ensure_ascii=True))
     result=subprocess.run([node,'--input-type=module','-'],input=script,text=True,encoding='utf-8',
         capture_output=True,timeout=20)
@@ -103,6 +121,8 @@ def test_real_streamlit_component_mounts_without_extra_buttons(monkeypatch,tmp_p
     app=AppTest.from_string('''
 import pandas as pd
 from ihm.components.prediction_review_table import render_prediction_review_table
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
 render_prediction_review_table(pd.DataFrame([{'Rang Oracle':1,'Symbole':'FUN','Score Oracle':.9}]),
     key='inline_table',trade_date='2026-10-16')
 ''').run(timeout=20)

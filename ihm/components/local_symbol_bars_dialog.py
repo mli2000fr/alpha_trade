@@ -15,6 +15,8 @@ _DIALOG_REQUEST_KEY = '_pipeline_local_bars_dialog_request'
 
 def request_local_symbol_bars_dialog(symbol, end_date, company_name=None):
     """Leave the polling fragment before registering the interactive dialog."""
+    from ihm.components.probability_details_dialog import REQUEST_KEY
+    st.session_state.pop(REQUEST_KEY,None)
     st.session_state[_DIALOG_REQUEST_KEY] = (symbol, end_date, company_name)
     st.rerun(scope='app')
 
@@ -28,6 +30,9 @@ def render_pending_local_symbol_bars_dialog():
     request = st.session_state.pop(_DIALOG_REQUEST_KEY, None)
     if request is not None:
         show_local_symbol_bars_dialog(*request)
+    else:
+        from ihm.components.probability_details_dialog import render_pending
+        render_pending()
 
 
 def annual_window(end_date):
