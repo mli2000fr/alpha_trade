@@ -285,6 +285,27 @@ def test_python_version_check_can_only_be_skipped_explicitly(backup,tmp_path,mon
         engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet,skip_python_version_check=True)
 
 
+def test_extract_files_reports_failing_member_and_operation(backup,tmp_path,monkeypatch):
+    _,folder,_=backup
+    payload=engine.verify(folder,PASSWORD)
+    target=tmp_path/'stage'
+
+    def fail_timestamp(*args,**kwargs):
+        raise FileNotFoundError(2,'synthetic missing file',str(args[0]))
+
+    monkeypatch.setattr(engine.os,'utime',fail_timestamp)
+    with pytest.raises(engine.RestoreExtractionError) as raised:
+        engine.extract_files(folder,payload,target,PASSWORD)
+    details=raised.value.details
+    assert details['phase']=='STAGING'
+    assert details['failed_path']
+    assert details['filesystem_operation']=='restaurer la date du fichier'
+    assert details['cause_type']=='FileNotFoundError'
+    assert details['filesystem_errno']==2
+    assert details['filesystem_path'].startswith('destination/')
+    assert str(target) not in raised.value.public_message
+
+
 def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     monkeypatch.setattr(environment,'registry_values',lambda scope:{})
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()
@@ -405,6 +426,35 @@ def test_restore_failure_reports_rollback_without_false_completion(backup,tmp_pa
     with pytest.raises(RuntimeError):plan_and_restore(backup,tmp_path,monkeypatch,db=db,on_progress=tracker.update)
     assert tracker.state['phase']=='FAILED_ROLLED_BACK' and tracker.state['percent']<100
     assert any(json.loads(line)['phase']=='ROLLBACK' for line in (job/'events.jsonl').read_text().splitlines())
+
+
+def test_staging_failure_details_survive_rollback(backup,tmp_path,monkeypatch):
+    from service.migration.tracking import Progress
+    _,folder,db=backup
+    target=tmp_path/'target';target.mkdir()
+    report=tmp_path/'report';job=tmp_path/'job';job.mkdir()
+    monkeypatch.setattr(environment,'registry_values',lambda scope:{})
+    plan=engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet)
+    failure=engine.RestoreExtractionError('files/package.part0001','artifacts/missing.bin',
+        'create destination file',FileNotFoundError(2,'synthetic missing file'),folder,target)
+
+    def fail_extract(*args,**kwargs):
+        raise failure
+
+    monkeypatch.setattr(engine,'extract_files',fail_extract)
+    tracker=Progress(job,'restore')
+    with pytest.raises(engine.RestoreExtractionError):
+        engine.restore(folder,target,PASSWORD,db,report,approved_plan=plan['fingerprint'],
+            quiet=quiet,on_progress=tracker.update)
+    details=json.loads((report/'failure.json').read_text())
+    assert details['phase']=='STAGING'
+    assert details['archive_package']=='files/package.part0001'
+    assert details['failed_path']=='artifacts/missing.bin'
+    assert details['filesystem_operation']=='create destination file'
+    assert details['filesystem_errno']==2
+    assert tracker.state['phase']=='FAILED_ROLLED_BACK'
+    assert tracker.state['failed_path']=='artifacts/missing.bin'
+    assert tracker.state['filesystem_operation']=='create destination file'
 
 
 def test_restore_can_skip_existing_backup(backup,tmp_path,monkeypatch):
