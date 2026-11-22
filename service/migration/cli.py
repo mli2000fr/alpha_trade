@@ -63,7 +63,8 @@ def run_request(request,job,*,tracker=None):
         return dict(status='COMPLETE',folder=request['output'],backup_id=result['id'],source_mode='online',
             archived_file_versions_recovered=result.get('archived_file_versions_recovered',0))
     if action=='plan':
-        result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report)
+        result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report,
+            preserve_existing_venv=not bool(request.get('rebuild_venv',True)))
         emit(report,'FINISHED');return result
     if action in ('restore','restore_files'):
         deadline=time.monotonic()+int(request.get('wait_seconds',900))
@@ -76,7 +77,8 @@ def run_request(request,job,*,tracker=None):
         if action=='restore':
             report=engine.restore(request['folder'],request['target'],password,db,request['report_dir'],
                 approved_plan=request['approved_plan'],cancel=cancel,on_progress=tracker.update,
-                skip_existing_backup=bool(request.get('skip_existing_backup',False)))
+                skip_existing_backup=bool(request.get('skip_existing_backup',False)),
+                preserve_existing_venv=not bool(request.get('rebuild_venv',True)))
         else:
             report=engine.restore_files(request['folder'],request['target'],password,db,request['report_dir'],
                 cancel=cancel,on_progress=tracker.update)

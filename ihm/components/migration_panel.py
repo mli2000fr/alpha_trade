@@ -44,6 +44,7 @@ def render_migration_panel():
         for key,field in (('t56_folder','folder'),('t56_target','target'),
                           ('t56_db_user','user'),('t56_dump','mysqldump'),('t56_mysql','mysql')):
             st.session_state.setdefault(key,saved.get(field) or '')
+        st.session_state.setdefault('t56_rebuild',saved.get('rebuild_venv',True))
     st.subheader('T5.6 — Sauvegarde complète et restauration sur un autre PC')
     st.caption('Trois bases US/FR/CN, code actuel, modèles, configuration, archives et variables d’environnement de l’application. Tous les packages sont chiffrés.')
     st.info('La sauvegarde laisse le PC source fonctionner. La restauration attend uniquement la fin des batchs actifs du PC cible ; l’IHM peut rester ouverte. Rien ne redémarre automatiquement.')
@@ -77,6 +78,9 @@ def render_migration_panel():
         folder=st.text_input('Répertoire contenant manifest.json',key='t56_folder')
         render_restore_command(folder)
         target=st.text_input('Projet sur le PC cible',r'C:\AlphaTrade',key='t56_target')
+        rebuild=st.checkbox('Recréer un nouvel environnement Python avec les versions sauvegardées',
+            value=True,key='t56_rebuild',
+            help='Décochez pour conserver le .venv existant sans le modifier. Vérifiez ensuite que ses dépendances conviennent au projet restauré.')
         from ihm.components.migration_files_only import render_files_only_restore
         render_files_only_restore(folder,target,password,_launch)
         st.caption('Sur un PC vierge, copier le répertoire complet puis lancer restaurer.ps1. Python et MySQL doivent être installés. Les versions requises sont inscrites dans le manifeste.')
@@ -87,7 +91,7 @@ def render_migration_panel():
         # otherwise Streamlit cleans up a later widget's entered password.
         if st.button('Vérifier les packages sans restaurer',key='t56_verify',disabled=not folder or len(password)<12):
             _launch(dict(action='verify',folder=folder,password=password))
-        context=dict(folder=folder,target=target,user=user,mysqldump=dump,mysql=mysql)
+        context=dict(folder=folder,target=target,user=user,mysqldump=dump,mysql=mysql,rebuild_venv=rebuild)
         missing=restore_preview_requirements(folder,target,password,user,db_password)
         if missing:
             st.info('Pour prévisualiser, renseigner : '+ ' ; '.join(missing)+'.')
@@ -100,7 +104,8 @@ def render_migration_panel():
                 st.session_state.pop('t56_plan_job',None)
                 st.session_state['t56_replace']=False
                 st.session_state['t56_plan_context']=context
-                _launch(dict(action='plan',folder=folder,target=target,password=password,connections=connections,mysqldump=dump,mysql=mysql))
+                _launch(dict(action='plan',folder=folder,target=target,password=password,connections=connections,
+                    mysqldump=dump,mysql=mysql,rebuild_venv=rebuild))
         if not st.session_state.get('t56_plan_job'):
             recovered=jobs.completed_plan_for(context)
             if recovered:
@@ -114,9 +119,8 @@ def render_migration_panel():
         plan=st.session_state.get('t56_plan_result')
         if plan and context==st.session_state.get('t56_plan_context'):
             st.json(plan)
-            st.warning('La restauration remplace les trois bases, puis installe les fichiers gérés. Après validation des bases, un échec des fichiers permet de reprendre uniquement leur installation. Un .venv existant doit être renommé manuellement ; il est préservé.')
+            st.warning('La restauration remplace les trois bases, puis installe les fichiers gérés. Après validation des bases, un échec des fichiers permet de reprendre uniquement leur installation. Si la reconstruction est décochée, le .venv existant est conservé sans mise à jour.')
             ready=st.checkbox('Je confirme le projet cible et le remplacement des trois bases',key='t56_replace')
-            rebuild=st.checkbox('Recréer un nouvel environnement Python avec les versions sauvegardées',value=True,key='t56_rebuild')
             skip_existing_backup=st.checkbox('Sauter la sauvegarde de l’existant avant restauration',
                 value=False,key='t56_skip_existing_backup')
             if skip_existing_backup:

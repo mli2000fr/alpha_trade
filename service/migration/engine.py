@@ -321,12 +321,13 @@ def model_checks(stage):
 
 
 def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_progress=None,
-                    verify_packages=True):
+                    verify_packages=True,preserve_existing_venv=False):
     folder=Path(folder).resolve();target=checked_directory(target)
     if target==Path(target.anchor) or folder==target or folder.is_relative_to(target):
         raise ValueError('La sauvegarde doit être hors de la destination à remplacer')
     if target.is_symlink() or target.is_junction():raise ValueError('Destination lien/jonction interdite')
-    if (target/'.venv').exists():raise ValueError('Renommer manuellement le .venv existant avant restauration ; il ne sera pas remplacé')
+    if (target/'.venv').exists() and not preserve_existing_venv:
+        raise ValueError('Renommer manuellement le .venv existant avant de reconstruire l’environnement Python')
     # A restore first compares its approved plan against the current target.
     # This cheap pass opens the authenticated manifest; the full package scan
     # still runs before any database or file is replaced.
@@ -345,6 +346,7 @@ def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_pro
     # Old model trees / stale app archives must not survive a mirror restore.
     managed=sorted(set(managed)|({'artifacts'} if (target/'artifacts').exists() else set()))
     plan=dict(backup_id=payload['id'],target_root=str(target),target_database_names=list(DATABASES),
+        preserve_existing_venv=preserve_existing_venv,
         existing_databases=[n for n,m in existing.items() if m is not None],
         replace_roots=[n for n in managed if (target/n).exists()],managed_roots=managed,
         environment_names=names,environment_conflicts=sorted(set(names)&set(present)),
@@ -453,15 +455,18 @@ def rollback_managed_roots(moves,failed_files):
 
 def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory.quiescent,
             env_writer=environment.write_user,env_reader=lambda:environment.registry_values('User'),
-            cancel=None,install_environment=True,guard=True,on_progress=None,skip_existing_backup=False):
+            cancel=None,install_environment=True,guard=True,on_progress=None,skip_existing_backup=False,
+            preserve_existing_venv=False):
     folder=Path(folder).resolve();target=checked_directory(target);reports=checked_directory(report_dir)
     if reports==target or reports.is_relative_to(target):raise ValueError('Le journal de restauration doit être hors destination')
-    plan=inspect_restore(folder,target,password,db,quiet=quiet,verify_packages=False)
+    plan=inspect_restore(folder,target,password,db,quiet=quiet,verify_packages=False,
+        preserve_existing_venv=preserve_existing_venv)
     if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
     if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
     verify(folder,password,cancel=cancel,on_progress=on_progress)
     # The target can change during the package scan; reject that change too.
-    plan=inspect_restore(folder,target,password,db,quiet=quiet,on_progress=on_progress,verify_packages=False)
+    plan=inspect_restore(folder,target,password,db,quiet=quiet,on_progress=on_progress,verify_packages=False,
+        preserve_existing_venv=preserve_existing_venv)
     if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
     if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
     reports.mkdir(parents=True,exist_ok=False,mode=0o700)

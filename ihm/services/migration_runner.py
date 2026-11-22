@@ -55,7 +55,7 @@ def _start_job(request,*,job_parent=None):
     if request['action']=='plan':
         # Paths and user name only. Never persist either password or DB connections.
         record['plan_context']={k:request.get(k) for k in
-            ('folder','target','mysqldump','mysql')}
+            ('folder','target','mysqldump','mysql','rebuild_venv')}
         record['plan_context']['user']=request['connections']['alpha_trade']['user']
     atomic_json(job/'job.json',record)
     try:remember_job(job)

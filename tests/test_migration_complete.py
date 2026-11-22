@@ -257,6 +257,21 @@ def test_active_target_and_existing_venv_block_replacement(backup,tmp_path,monke
     assert not db.calls
 
 
+def test_existing_venv_can_be_preserved_during_restore(backup,tmp_path,monkeypatch):
+    _,folder,db=backup
+    target=tmp_path/'target';target.mkdir()
+    existing_python=target/'.venv'/'Scripts'/'python.exe'
+    existing_python.parent.mkdir(parents=True)
+    existing_python.write_bytes(b'existing environment')
+    monkeypatch.setattr(environment,'registry_values',lambda scope:{})
+    plan=engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet,preserve_existing_venv=True)
+    assert plan['preserve_existing_venv'] is True
+    result=engine.restore(folder,target,PASSWORD,db,tmp_path/'report',approved_plan=plan['fingerprint'],
+        quiet=quiet,env_writer=lambda values:None,env_reader=lambda:{},preserve_existing_venv=True)
+    assert result['status']=='RESTORED_PAUSED'
+    assert existing_python.read_bytes()==b'existing environment'
+
+
 def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     monkeypatch.setattr(environment,'registry_values',lambda scope:{})
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()
