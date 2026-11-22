@@ -176,6 +176,10 @@ Le restaurateur portable affiche également ses étapes dans PowerShell.
 Installer la même famille **Python majeure.mineure** et **MySQL majeure.mineure**
 que celle du manifeste, ainsi que les clients `mysql` et `mysqldump`. Les trois
 bases physiques sont `alpha_trade`, `alpha_trade_fr`, `alpha_trade_cn`.
+Dans l’IHM, le contrôle Python peut être ignoré avec la case dédiée, décochée
+par défaut ; ce contournement ne garantit pas la compatibilité des dépendances
+ni de l’application restaurée. Le contrôle MySQL, le système et l’architecture
+restent obligatoires.
 Le restaurateur refuse un serveur non local et **le même UUID MySQL que la
 source**, pour éviter d'écraser le serveur du PC encore actif.
 

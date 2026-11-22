@@ -272,6 +272,19 @@ def test_existing_venv_can_be_preserved_during_restore(backup,tmp_path,monkeypat
     assert existing_python.read_bytes()==b'existing environment'
 
 
+def test_python_version_check_can_only_be_skipped_explicitly(backup,tmp_path,monkeypatch):
+    _,folder,db=backup
+    target=tmp_path/'target';target.mkdir()
+    monkeypatch.setattr(engine.platform,'python_version',lambda:'0.0.0')
+    with pytest.raises(ValueError,match='version majeure.mineure'):
+        engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet)
+    plan=engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet,skip_python_version_check=True)
+    assert plan['skip_python_version_check'] is True
+    monkeypatch.setattr(engine.platform,'machine',lambda:'incompatible-architecture')
+    with pytest.raises(ValueError,match='Système et architecture'):
+        engine.inspect_restore(folder,target,PASSWORD,db,quiet=quiet,skip_python_version_check=True)
+
+
 def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     monkeypatch.setattr(environment,'registry_values',lambda scope:{})
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()
