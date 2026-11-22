@@ -58,8 +58,8 @@ def render_migration_panel():
         output=st.text_input('Nouveau répertoire de sauvegarde',str(base/('alpha-trade-'+stamp)),key='t56_output')
         render_restore_command(output,pending=True)
         confirm=st.text_input('Confirmer le mot de passe',type='password',key='t56_password_confirm')
-        dump=st.text_input('Client mysqldump.exe',r'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe',key='t56_dump')
-        mysql=st.text_input('Client mysql.exe',r'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe',key='t56_mysql')
+        dump=st.text_input('Client mysqldump.exe',r'D:\MySQL\MySQL Server 8.0\bin\mysqldump.exe',key='t56_dump')
+        mysql=st.text_input('Client mysql.exe',r'D:\MySQL\MySQL Server 8.0\bin\mysql.exe',key='t56_mysql')
         st.caption('Sauvegarde à chaud : une transaction par base. Les bases et fichiers ne constituent pas un instantané global unique. Un fichier modifié pendant sa lecture peut faire échouer la sauvegarde, sans interrompre le travail du PC source.')
         if st.button('Inventorier les fichiers et les variables',key='t56_inventory'):
             _launch(dict(action='inventory',root=str(root)))
@@ -77,7 +77,7 @@ def render_migration_panel():
     with restore_tab:
         folder=st.text_input('Répertoire contenant manifest.json',key='t56_folder')
         render_restore_command(folder)
-        target=st.text_input('Projet sur le PC cible',r'C:\AlphaTrade',key='t56_target')
+        target=st.text_input('Projet sur le PC cible',r'D:\alpha_trade',key='t56_target')
         rebuild=st.checkbox('Recréer un nouvel environnement Python avec les versions sauvegardées',
             value=True,key='t56_rebuild',
             help='Décochez pour conserver le .venv existant sans le modifier. Vérifiez ensuite que ses dépendances conviennent au projet restauré.')
