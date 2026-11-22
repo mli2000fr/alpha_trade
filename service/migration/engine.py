@@ -284,26 +284,76 @@ def private_json(folder,payload,role,password):
     with decrypted_input(safe_path(folder,package['folder']),package,password) as stream:return json.load(stream)
 
 
+class RestoreExtractionError(RuntimeError):
+    def __init__(self,package,member,operation,cause,source_root,target_root):
+        self.details=dict(phase='STAGING',archive_package=package,
+            filesystem_operation=operation,cause_type=type(cause).__name__,
+            filesystem_errno=getattr(cause,'errno',None),
+            filesystem_winerror=getattr(cause,'winerror',None))
+        if member:self.details['failed_path']=member
+        filename=getattr(cause,'filename',None)
+        if isinstance(filename,(str,os.PathLike)):
+            try:candidate=Path(filename).resolve()
+            except (OSError,RuntimeError,ValueError):candidate=None
+            if candidate is not None:
+                for label,root in (('sauvegarde',source_root),('destination',target_root)):
+                    try:relative=candidate.relative_to(Path(root).resolve())
+                    except (OSError,ValueError):continue
+                    self.details['filesystem_path']=f'{label}/{relative.as_posix()}'
+                    break
+        location=f'fichier {member}' if member else f'package {package}'
+        code=f'errno={cause.errno}' if getattr(cause,'errno',None) is not None else 'code système indisponible'
+        winerror=getattr(cause,'winerror',None)
+        if winerror is not None:code+=f', winerror={winerror}'
+        filesystem_path=self.details.get('filesystem_path')
+        path=f' — chemin système {filesystem_path}' if filesystem_path else ''
+        self.public_message=f'Échec extraction ({operation}) — {location}{path} — {type(cause).__name__} ({code})'
+        super().__init__(self.public_message)
+
+
 def extract_files(folder,payload,target,password,cancel=None,on_progress=None):
     processed=0;done=0
     files=[f for p in payload['packages'] if p['kind']=='files' for f in p['files']]
     emit(on_progress,total_bytes=sum(f['size'] for f in files),files_total=len(files),processed_bytes=0,files_done=0)
     for package in payload['packages']:
         if package['kind']!='files':continue
-        with decrypted_input(safe_path(folder,package['folder']),package,password) as stream:
-            with tarfile.open(fileobj=stream,mode='r|gz') as archive:
-                for member in archive:
-                    check_cancel(cancel)
-                    emit(on_progress,item=member.name)
-                    if not member.isfile():raise ValueError('Lien/répertoire d’archive non autorisé')
-                    path=safe_path(target,member.name);path.parent.mkdir(parents=True,exist_ok=True)
-                    with path.open('xb') as out:
-                        source=archive.extractfile(member)
-                        while block:=source.read(BLOCK):
-                            check_cancel(cancel);out.write(block);processed+=len(block)
-                            emit(on_progress,processed_bytes=processed)
-                    os.utime(path,(member.mtime,member.mtime))
-                    done+=1;emit(on_progress,files_done=done)
+        member_name=None;operation='ouvrir le package chiffré'
+        try:
+            with decrypted_input(safe_path(folder,package['folder']),package,password) as stream:
+                operation='ouvrir l’archive'
+                with tarfile.open(fileobj=stream,mode='r|gz') as archive:
+                    members=iter(archive)
+                    while True:
+                        member_name=None;operation='lire le prochain fichier de l’archive'
+                        try:member=next(members)
+                        except StopIteration:break
+                        member_name=member.name
+                        check_cancel(cancel)
+                        emit(on_progress,item=member_name)
+                        if not member.isfile():raise ValueError('Lien/répertoire d’archive non autorisé')
+                        operation='créer le dossier de destination'
+                        path=safe_path(target,member_name);path.parent.mkdir(parents=True,exist_ok=True)
+                        operation='créer le fichier extrait'
+                        with path.open('xb') as out:
+                            operation='ouvrir le fichier dans l’archive'
+                            source=archive.extractfile(member)
+                            if source is None:raise ValueError('Contenu de fichier absent de l’archive')
+                            operation='lire le contenu de l’archive'
+                            block=source.read(BLOCK)
+                            while block:
+                                check_cancel(cancel)
+                                operation='écrire le fichier de destination'
+                                out.write(block);processed+=len(block)
+                                emit(on_progress,processed_bytes=processed)
+                                operation='lire le contenu de l’archive'
+                                block=source.read(BLOCK)
+                        operation='restaurer la date du fichier'
+                        os.utime(path,(member.mtime,member.mtime))
+                        done+=1;emit(on_progress,files_done=done)
+        except InterruptedError:
+            raise
+        except OSError as exc:
+            raise RestoreExtractionError(package['folder'],member_name,operation,exc,folder,target) from exc
 
 
 def model_checks(stage):
@@ -572,12 +622,19 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
         # Once the databases have passed validation, only files/environment roll back.
         # The authenticated checkpoint allows a separate file-only retry.
         ok=True
+        details=failure_details(exc)
+        failure_reason=getattr(exc,'public_message',None)
+        failure_record=dict(details)
+        failure_record.update(phase=details.get('phase','FILE_REPLACEMENT' if isinstance(exc,FileInstallError) else 'RESTORE'),
+            error_type=type(exc).__name__,failed_at=utc())
+        if failure_reason:failure_record['message']=failure_reason
         if isinstance(exc,FileInstallError):
-            try:atomic_json(reports/'failure.json',dict(phase='FILE_REPLACEMENT',root=exc.item,
-                operation=exc.operation,system_code=exc.code,error_type=type(exc).__name__,failed_at=utc()))
-            except OSError:pass
+            failure_record.update(root=exc.item,operation=exc.operation,system_code=exc.code)
+        try:atomic_json(reports/'failure.json',failure_record)
+        except OSError:pass
         emit(on_progress,'FILE_ROLLBACK' if database_ready else 'ROLLBACK',
-            item=exc.item if isinstance(exc,FileInstallError) else None)
+            item=exc.item if isinstance(exc,FileInstallError) else None,
+            failure_reason=failure_reason,**details)
         try:
             if env_started:env_writer({name:old_env.get(name) for name in changed})
             rollback_managed_roots(moves,failed_files)
@@ -597,8 +654,9 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
         atomic_json(target/PENDING,dict(reason=state if database_ready else 'RESTORE_FAILED_REVIEW_REQUIRED',
             report_dir=str(reports),preimage_skipped=skip_existing_backup))
         atomic_json(reports/'progress.json',dict(status=state,database_ready=database_ready,
-            error_type=type(exc).__name__,finished_at=utc(),services_auto_restart=False))
-        emit(on_progress,state)
+            error_type=type(exc).__name__,finished_at=utc(),services_auto_restart=False,
+            message=failure_reason,**details))
+        emit(on_progress,state,failure_reason=failure_reason,**details)
         raise
     return json.loads((reports/'restore-report.json').read_text(encoding='utf-8'))
 

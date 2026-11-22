@@ -157,6 +157,8 @@ Le journal intégral est `events.jsonl` et l'état courant `tracking.json`, dans
 le dossier du worker ; ils sont également écrits dans le répertoire de sauvegarde
 ou le rapport de restauration dès que ce répertoire existe. Les horaires de
 l'écran sont ceux de Paris ; les événements sur disque portent une date UTC.
+En cas d’échec pendant l’extraction, `failure.json` précise le package, le
+fichier relatif, l’opération et le chemin système relatif impliqué.
 Les événements de phase sont conservés, les compteurs sont limités à une écriture
 par seconde et les traces de volume à une toutes les quinze secondes, plus les
 fins de package. Le suivi n'enregistre aucun SQL, contenu de fichier, requête
