@@ -321,7 +321,7 @@ def model_checks(stage):
 
 
 def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_progress=None,
-                    verify_packages=True,preserve_existing_venv=False):
+                    verify_packages=True,preserve_existing_venv=False,skip_python_version_check=False):
     folder=Path(folder).resolve();target=checked_directory(target)
     if target==Path(target.anchor) or folder==target or folder.is_relative_to(target):
         raise ValueError('La sauvegarde doit être hors de la destination à remplacer')
@@ -334,7 +334,8 @@ def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_pro
     payload=verify(folder,password,on_progress=on_progress) if verify_packages else open_manifest(folder/'manifest.json',password)
     emit(on_progress,'RESTORE_PREFLIGHT')
     runtime=private_json(folder,payload,'runtime',password)
-    if runtime['versions']['python'].split('.')[:2]!=platform.python_version().split('.')[:2]:
+    if (not skip_python_version_check
+            and runtime['versions']['python'].split('.')[:2]!=platform.python_version().split('.')[:2]):
         raise ValueError('Installer la même version majeure.mineure de Python que la source')
     if runtime['versions']['system']!=platform.system() or runtime['versions']['machine']!=platform.machine():
         raise ValueError('Système et architecture Python identiques à la source requis')
@@ -347,6 +348,7 @@ def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_pro
     managed=sorted(set(managed)|({'artifacts'} if (target/'artifacts').exists() else set()))
     plan=dict(backup_id=payload['id'],target_root=str(target),target_database_names=list(DATABASES),
         preserve_existing_venv=preserve_existing_venv,
+        skip_python_version_check=skip_python_version_check,
         existing_databases=[n for n,m in existing.items() if m is not None],
         replace_roots=[n for n in managed if (target/n).exists()],managed_roots=managed,
         environment_names=names,environment_conflicts=sorted(set(names)&set(present)),
@@ -456,17 +458,19 @@ def rollback_managed_roots(moves,failed_files):
 def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory.quiescent,
             env_writer=environment.write_user,env_reader=lambda:environment.registry_values('User'),
             cancel=None,install_environment=True,guard=True,on_progress=None,skip_existing_backup=False,
-            preserve_existing_venv=False):
+            preserve_existing_venv=False,skip_python_version_check=False):
     folder=Path(folder).resolve();target=checked_directory(target);reports=checked_directory(report_dir)
     if reports==target or reports.is_relative_to(target):raise ValueError('Le journal de restauration doit être hors destination')
     plan=inspect_restore(folder,target,password,db,quiet=quiet,verify_packages=False,
-        preserve_existing_venv=preserve_existing_venv)
+        preserve_existing_venv=preserve_existing_venv,
+        skip_python_version_check=skip_python_version_check)
     if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
     if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
     verify(folder,password,cancel=cancel,on_progress=on_progress)
     # The target can change during the package scan; reject that change too.
     plan=inspect_restore(folder,target,password,db,quiet=quiet,on_progress=on_progress,verify_packages=False,
-        preserve_existing_venv=preserve_existing_venv)
+        preserve_existing_venv=preserve_existing_venv,
+        skip_python_version_check=skip_python_version_check)
     if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
     if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
     reports.mkdir(parents=True,exist_ok=False,mode=0o700)

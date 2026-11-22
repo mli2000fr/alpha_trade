@@ -45,6 +45,8 @@ def render_migration_panel():
                           ('t56_db_user','user'),('t56_dump','mysqldump'),('t56_mysql','mysql')):
             st.session_state.setdefault(key,saved.get(field) or '')
         st.session_state.setdefault('t56_rebuild',saved.get('rebuild_venv',True))
+        st.session_state.setdefault('t56_skip_python_version_check',
+                                    saved.get('skip_python_version_check',False))
     st.subheader('T5.6 — Sauvegarde complète et restauration sur un autre PC')
     st.caption('Trois bases US/FR/CN, code actuel, modèles, configuration, archives et variables d’environnement de l’application. Tous les packages sont chiffrés.')
     st.info('La sauvegarde laisse le PC source fonctionner. La restauration attend uniquement la fin des batchs actifs du PC cible ; l’IHM peut rester ouverte. Rien ne redémarre automatiquement.')
@@ -81,6 +83,12 @@ def render_migration_panel():
         rebuild=st.checkbox('Recréer un nouvel environnement Python avec les versions sauvegardées',
             value=True,key='t56_rebuild',
             help='Décochez pour conserver le .venv existant sans le modifier. Vérifiez ensuite que ses dépendances conviennent au projet restauré.')
+        skip_python_version_check=st.checkbox(
+            'Ignorer le contrôle de version majeure.mineure de Python',
+            value=False,key='t56_skip_python_version_check',
+            help='À utiliser uniquement si vous acceptez le risque d’incompatibilité avec les dépendances ou le code restauré.')
+        if skip_python_version_check:
+            st.warning('Le contrôle Python est ignoré. La restauration peut réussir mais l’application ou ses dépendances peuvent ne pas fonctionner.')
         from ihm.components.migration_files_only import render_files_only_restore
         render_files_only_restore(folder,target,password,_launch)
         st.caption('Sur un PC vierge, copier le répertoire complet puis lancer restaurer.ps1. Python et MySQL doivent être installés. Les versions requises sont inscrites dans le manifeste.')
@@ -91,7 +99,8 @@ def render_migration_panel():
         # otherwise Streamlit cleans up a later widget's entered password.
         if st.button('Vérifier les packages sans restaurer',key='t56_verify',disabled=not folder or len(password)<12):
             _launch(dict(action='verify',folder=folder,password=password))
-        context=dict(folder=folder,target=target,user=user,mysqldump=dump,mysql=mysql,rebuild_venv=rebuild)
+        context=dict(folder=folder,target=target,user=user,mysqldump=dump,mysql=mysql,
+            rebuild_venv=rebuild,skip_python_version_check=skip_python_version_check)
         missing=restore_preview_requirements(folder,target,password,user,db_password)
         if missing:
             st.info('Pour prévisualiser, renseigner : '+ ' ; '.join(missing)+'.')
@@ -105,7 +114,8 @@ def render_migration_panel():
                 st.session_state['t56_replace']=False
                 st.session_state['t56_plan_context']=context
                 _launch(dict(action='plan',folder=folder,target=target,password=password,connections=connections,
-                    mysqldump=dump,mysql=mysql,rebuild_venv=rebuild))
+                    mysqldump=dump,mysql=mysql,rebuild_venv=rebuild,
+                    skip_python_version_check=skip_python_version_check))
         if not st.session_state.get('t56_plan_job'):
             recovered=jobs.completed_plan_for(context)
             if recovered:
@@ -136,7 +146,8 @@ def render_migration_panel():
                 report=Path(folder).resolve()/'journaux'/('restauration-'+stamp)
                 _launch(dict(action='restore',folder=folder,target=target,password=password,connections=connections,
                     mysqldump=dump,mysql=mysql,approved_plan=plan['fingerprint'],report_dir=str(report),
-                    rebuild_venv=rebuild,skip_existing_backup=skip_existing_backup),
+                    rebuild_venv=rebuild,skip_python_version_check=skip_python_version_check,
+                    skip_existing_backup=skip_existing_backup),
                     parent=Path(folder).resolve()/'journaux'/'jobs')
         pending_report=jobs.latest_files_pending(folder,target)
         if pending_report:
