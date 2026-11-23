@@ -23,7 +23,7 @@ from .tracking import emit,CountingWriter
 from .file_capture import open_source,failure_details
 from .locking import LOCK,migration_lock,MigrationLockError
 from .storage import (BLOCK,atomic_json,canonical,decrypted_input,encrypted_output,open_manifest,
-                      safe_path,seal_manifest,sha_file,checked_directory)
+                      safe_path,seal_manifest,sha_file,checked_directory,scratch_directory)
 
 PENDING='.alpha_trade_restore_pending.json'
 DB_READY='database-ready.json'
@@ -532,9 +532,9 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
     target.mkdir(parents=True,exist_ok=True)
     # Same-volume staging/quarantine keeps os.replace valid even when the
     # encrypted backup and its reports live on an external USB/network drive.
-    stage=target.parent/('.alpha-migration-stage-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
-    old_files=target.parent/('.alpha-migration-previous-'+uuid.uuid4().hex);old_files.mkdir(mode=0o700)
-    failed_files=target.parent/('.alpha-migration-failed-'+uuid.uuid4().hex)
+    stage=scratch_directory(target.parent,'stage');stage.mkdir(mode=0o700)
+    old_files=scratch_directory(target.parent,'previous');old_files.mkdir(mode=0o700)
+    failed_files=scratch_directory(target.parent,'failed')
     preimage=reports/'existant-chiffre'
     atomic_json(reports/'local-directories.json',dict(staging=str(stage),previous=str(old_files),failed=str(failed_files)))
     old_env=env_reader();changed=[];moves=[];database_started=False;database_ready=False;env_started=False
@@ -686,9 +686,9 @@ def restore_files(folder,target,password,db,report_dir,*,quiet=inventory.quiesce
         raise ValueError('Périmètre de fichiers du point de reprise invalide')
     size=sum(f['size'] for p in payload['packages'] if p['kind']=='files' for f in p['files'])
     if shutil.disk_usage(target.parent).free<size*1.2:raise ValueError('Espace insuffisant pour préparer les fichiers')
-    stage=target.parent/('.alpha-migration-stage-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
-    old_files=target.parent/('.alpha-migration-previous-'+uuid.uuid4().hex);old_files.mkdir(mode=0o700)
-    failed_files=target.parent/('.alpha-migration-failed-'+uuid.uuid4().hex)
+    stage=scratch_directory(target.parent,'stage');stage.mkdir(mode=0o700)
+    old_files=scratch_directory(target.parent,'previous');old_files.mkdir(mode=0o700)
+    failed_files=scratch_directory(target.parent,'failed')
     atomic_json(reports/'local-directories.json',dict(staging=str(stage),previous=str(old_files),failed=str(failed_files)))
     old_env=env_reader();changed=[];moves=[];env_started=False;db_verified=False
     def progress(phase,**extra):
@@ -794,8 +794,8 @@ def recover(preimage,password,db,report_dir,*,quiet=inventory.quiescent,
     if quiet(target,allow_ui=False):raise ValueError('Fermer les tâches du PC cible avant récupération')
     db.check_destination({n:m for n,m in data['databases'].items() if m},allow_same_server=True)
     reports.mkdir(parents=True,exist_ok=False,mode=0o700)
-    stage=target.parent/('.alpha-migration-recovery-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
-    partial=target.parent/('.alpha-migration-partial-'+uuid.uuid4().hex);partial.mkdir(mode=0o700)
+    stage=scratch_directory(target.parent,'recovery');stage.mkdir(mode=0o700)
+    partial=scratch_directory(target.parent,'partial');partial.mkdir(mode=0o700)
     atomic_json(reports/'local-directories.json',dict(staging=str(stage),partial=str(partial)))
     # Fully decrypt/check archives before changing a destination schema.
     payload=dict(packages=data['file_packages'])

@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import struct
 import re
+import uuid
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -91,6 +92,13 @@ def checked_directory(path):
     for item in (raw,*raw.parents):
         if item.is_symlink() or item.is_junction():raise ValueError('Destination lien/jonction interdite')
     return raw.resolve()
+
+
+def scratch_directory(parent,kind):
+    prefixes={'stage':'.at-s-','previous':'.at-p-','failed':'.at-f-',
+              'recovery':'.at-r-','partial':'.at-x-'}
+    if kind not in prefixes:raise ValueError('Type de dossier temporaire inconnu')
+    return Path(parent)/(prefixes[kind]+uuid.uuid4().hex)
 
 
 class SplitWriter:

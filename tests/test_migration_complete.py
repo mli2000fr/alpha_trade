@@ -306,6 +306,14 @@ def test_extract_files_reports_failing_member_and_operation(backup,tmp_path,monk
     assert str(target) not in raised.value.public_message
 
 
+def test_scratch_directory_keeps_long_archive_paths_under_windows_limit():
+    member=Path('artifacts/fr/research/data_readiness_16c/bootstrap-remediation-20261007-v1/'
+        'eodhd_daily/observations/0093427eaadf313352ecec0a5090248dd023be780729ff5499d78ce458e1b77f/'
+        '20261007T203215747642Z-1ead85b4.json')
+    destination=storage.scratch_directory(Path('D:\\'),'stage')/member
+    assert len(str(destination))<260
+
+
 def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     monkeypatch.setattr(environment,'registry_values',lambda scope:{})
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()

@@ -199,7 +199,8 @@ l'outil ne le supprime, ne le réutilise et ne le remplace pas.
 Le dossier de packages et les journaux de restauration doivent être **hors du
 projet cible**. Un disque externe convient ; la préparation et les anciens
 fichiers sont conservés dans des dossiers privés à côté du projet pour assurer
-les déplacements sur le même volume.
+les déplacements sur le même volume. Leurs noms sont courts afin de réduire le
+risque de dépasser la limite de chemin Windows pendant l’extraction.
 
 ## Restaurer
 
