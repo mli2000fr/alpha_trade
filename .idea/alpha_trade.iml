@@ -120,6 +120,36 @@
       <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/migration1/source/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/test_active_target_and_existin0/target/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/test_standalone_files_restore_0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/migration1/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_existing_venv_can_be_pres0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125a/test_standalone_files_restore_0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/migration1/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_existing_venv_can_be_pres0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125c/test_standalone_files_restore_0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/migration1/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_existing_venv_can_be_pres0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_standalone_files_restore_0/target/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="D:\alpha_trade\.venv" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

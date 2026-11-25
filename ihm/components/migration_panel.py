@@ -9,6 +9,7 @@ from ihm.services import migration_runner as jobs
 from service.migration.mysql import Connection,DATABASES
 from dataclasses import asdict
 from ihm.components.migration_command import render_restore_command
+from service.migration.profiles import FULL,US_DAILY,list_models,news_context_days
 
 
 def _launch(request,parent=None):
@@ -48,13 +49,39 @@ def render_migration_panel():
         st.session_state.setdefault('t56_skip_python_version_check',
                                     saved.get('skip_python_version_check',False))
     st.subheader('T5.6 — Sauvegarde complète et restauration sur un autre PC')
-    st.caption('Trois bases US/FR/CN, code actuel, modèles, configuration, archives et variables d’environnement de l’application. Tous les packages sont chiffrés.')
+    st.caption('Sauvegarde complète ou exploitation quotidienne US : code, modèle, configuration, données et variables d’environnement. Tous les packages sont chiffrés.')
     st.info('La sauvegarde laisse le PC source fonctionner. La restauration attend uniquement la fin des batchs actifs du PC cible ; l’IHM peut rester ouverte. Rien ne redémarre automatiquement.')
     st.caption('Barres de progression et journal en direct dans l’onglet « Suivi et packages ».')
     password=st.text_input('Mot de passe des packages — sauvegarde ou restauration (12 caractères minimum)',
         type='password',key='t56_password',help='Pour restaurer, saisir le mot de passe utilisé lors de la création de cette sauvegarde. Il est différent du mot de passe MySQL cible.')
     export_tab,restore_tab,follow_tab=st.tabs(['Créer une sauvegarde','Vérifier / restaurer','Suivi et packages'])
     with export_tab:
+        profile=st.selectbox('Contenu de la sauvegarde',[FULL,US_DAILY],key='t56_backup_profile',
+            format_func=lambda p:'Complète — US / FR / CN et toutes les archives' if p==FULL else 'Exploitation quotidienne US — modèle choisi et données utiles')
+        selected_model=None
+        if profile==US_DAILY:
+            models=list_models(root)
+            by_id={m['batch_id']:m for m in models}
+            identifiers=list(by_id)
+            current=None
+            try:
+                import yaml
+                conf=yaml.safe_load((root/'config.yaml').read_text(encoding='utf-8')) or {}
+                for policy in (conf.get('us_pipeline') or {}).values():
+                    if isinstance(policy,dict) and policy.get('enabled') and policy.get('model_batch_id') in by_id:
+                        current=policy['model_batch_id'];break
+            except (OSError,ValueError):pass
+            selected_model=st.selectbox('Modèle à utiliser sur le PC cible',identifiers,
+                index=identifiers.index(current) if current else 0 if identifiers else None,
+                format_func=lambda b:f"{b} — H{by_id[b]['horizon']} — {len(by_id[b]['universe'])} titres"+
+                    (f" — {by_id[b]['comment']}" if by_id[b]['comment'] else ''),key='t56_selected_model')
+            if not identifiers:st.warning('Aucun modèle Oracle terminé disponible pour la sauvegarde allégée.')
+            st.info('Base US uniquement ; modèle choisi et ses modèles par titre/anti-SL, code, configuration, variables et état complet des comptes. Environ trois ans de cours journaliers restent nécessaires à la prédiction. Les anciens intraday, backtests, autres modèles et matrices d’entraînement sont exclus.')
+            try:news_days=news_context_days(root)
+            except (OSError,ValueError):news_days=100
+            st.caption(f'Contexte conservé : 1 120 jours calendaires pour les cours/features ; {news_days} jours de news pour le recalcul avec contexte ; consensus et dépôts SEC limités selon la fraîcheur configurée (14 et 30 jours par défaut) ; 7 jours de bougies intraday et options. Les lignes parentes nécessaires sont ajoutées pour conserver les relations SQL. Ce package ne permet pas de reprendre un entraînement ni de longs backtests historiques.')
+            st.caption('Le modèle choisi est raccordé uniquement dans la copie de config.yaml du package. Le PC source reste inchangé. Un modèle incompatible avec le parcours quotidien actif sera refusé avant export.')
+        export_options=dict(backup_profile=profile,selected_model=selected_model) if profile==US_DAILY else {}
         base=root/'backups'/'migrations'
         stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
         output=st.text_input('Nouveau répertoire de sauvegarde',str(base/('alpha-trade-'+stamp)),key='t56_output')
@@ -64,7 +91,7 @@ def render_migration_panel():
         mysql=st.text_input('Client mysql.exe',r'D:\MySQL\MySQL Server 8.0\bin\mysql.exe',key='t56_mysql')
         st.caption('Sauvegarde à chaud : une transaction par base. Les bases et fichiers ne constituent pas un instantané global unique. Un fichier modifié pendant sa lecture peut faire échouer la sauvegarde, sans interrompre le travail du PC source.')
         if st.button('Inventorier les fichiers et les variables',key='t56_inventory'):
-            _launch(dict(action='inventory',root=str(root)))
+            _launch(dict(action='inventory',root=str(root),**export_options))
         inventory_job=st.session_state.get('t56_inventory_job')
         if inventory_job and (Path(inventory_job)/'progress.json').is_file():
             from ihm.components.migration_inventory import render_inventory_result
@@ -74,8 +101,8 @@ def render_migration_panel():
             st.dataframe(result['packages'],hide_index=True)
             with st.expander('Variables : noms, présence et origine (aucune valeur affichée)'):
                 st.dataframe(result['variables'],hide_index=True)
-        if st.button('Créer les packages chiffrés',key='t56_export',disabled=len(password)<12 or password!=confirm):
-            _launch(dict(action='export',root=str(root),output=output,password=password,mysqldump=dump,mysql=mysql))
+        if st.button('Créer les packages chiffrés',key='t56_export',disabled=len(password)<12 or password!=confirm or profile==US_DAILY and not selected_model):
+            _launch(dict(action='export',root=str(root),output=output,password=password,mysqldump=dump,mysql=mysql,**export_options))
     with restore_tab:
         folder=st.text_input('Répertoire contenant manifest.json',key='t56_folder')
         render_restore_command(folder)
@@ -92,7 +119,7 @@ def render_migration_panel():
         from ihm.components.migration_files_only import render_files_only_restore
         render_files_only_restore(folder,target,password,_launch)
         st.caption('Sur un PC vierge, copier le répertoire complet puis lancer restaurer.ps1. Python et MySQL doivent être installés. Les versions requises sont inscrites dans le manifeste.')
-        user=st.text_input('Utilisateur MySQL local cible (pour les trois bases)',value='root',key='t56_db_user')
+        user=st.text_input('Utilisateur MySQL local cible (pour les bases du package)',value='root',key='t56_db_user')
         db_password=st.text_input('Mot de passe MySQL cible',type='password',key='t56_db_password')
         connections={n:asdict(Connection(user=user,password=db_password)) for n in DATABASES}
         # All input widgets must render before an action can rerun the page;
@@ -129,14 +156,17 @@ def render_migration_panel():
         plan=st.session_state.get('t56_plan_result')
         if plan and context==st.session_state.get('t56_plan_context'):
             st.json(plan)
-            st.warning('La restauration remplace les trois bases, puis installe les fichiers gérés. Après validation des bases, un échec des fichiers permet de reprendre uniquement leur installation. Si la reconstruction est décochée, le .venv existant est conservé sans mise à jour.')
-            ready=st.checkbox('Je confirme le projet cible et le remplacement des trois bases',key='t56_replace')
+            us_only=plan.get('target_database_names')==['alpha_trade']
+            scope_label='la base US alpha_trade uniquement (FR/CN intactes)' if us_only else 'les trois bases US/FR/CN'
+            st.warning('La restauration remplace '+scope_label+', puis installe les fichiers gérés. Après validation des bases, un échec des fichiers permet de reprendre uniquement leur installation. Si la reconstruction est décochée, le .venv existant est conservé sans mise à jour.')
+            confirmation_scope='de '+scope_label if us_only else 'des trois bases US/FR/CN'
+            ready=st.checkbox('Je confirme le projet cible et le remplacement '+confirmation_scope,key='t56_replace')
             skip_existing_backup=st.checkbox('Sauter la sauvegarde de l’existant avant restauration',
                 value=False,key='t56_skip_existing_backup')
             if skip_existing_backup:
                 st.error('Sans sauvegarde de l’existant, un échec pendant la restauration SQL ne pourra pas revenir automatiquement aux anciennes bases. Après validation SQL, une erreur de fichiers conservera les bases restaurées.')
             restore_missing=[]
-            if not ready:restore_missing.append('cocher la confirmation du remplacement des trois bases')
+            if not ready:restore_missing.append('cocher la confirmation du remplacement des bases indiquées')
             if len(password)<12:restore_missing.append('ressaisir le mot de passe des packages en haut de la page')
             if not db_password:restore_missing.append('ressaisir le mot de passe MySQL cible')
             if restore_missing:
@@ -151,7 +181,7 @@ def render_migration_panel():
                     parent=Path(folder).resolve()/'journaux'/'jobs')
         pending_report=jobs.latest_files_pending(folder,target)
         if pending_report:
-            st.info('Les trois bases sont validées. L’installation des fichiers peut être relancée sans réimporter les bases.')
+            st.info('Les bases du package sont validées. L’installation des fichiers peut être relancée sans les réimporter.')
             st.caption('Rapport à reprendre : '+pending_report)
             resume_rebuild=st.checkbox('Créer l’environnement Python après installation des fichiers',
                 value=True,key='t56_resume_rebuild')

@@ -7,6 +7,77 @@ n'est arrêté, désactivé ou reconfiguré par cet outil.
 
 ## Contenu des packages
 
+### Mode « Exploitation quotidienne US » (25 novembre 2026)
+
+Dans **Créer une sauvegarde → Contenu de la sauvegarde**, choisir
+**Exploitation quotidienne US — modèle choisi et données utiles**, puis le
+modèle dans la liste. Le modèle actuellement configuré est proposé lorsqu'il
+est disponible. La sauvegarde complète historique reste disponible.
+
+Le nouveau mode conserve :
+
+- Le code et les dépendances épinglées nécessaires aux imports de l'application,
+  les configurations, univers, prompts et variables d'environnement chiffrées.
+- Un seul batch Oracle terminé dans `artifacts/models`, avec ses contrats,
+  poids Oracle, modèles LONG/SHORT et anti-SL éventuels, métriques et fichiers
+  référencés par les contrôles d'intégrité. Les matrices/chunks d'entraînement,
+  labels et grands panneaux de recherche sont exclus.
+- Les états métier : campagnes Winner, ordres/fills, lots, comptes, décisions,
+  journaux comptables et reçus/claims des parcours Q051/options/LLM. Les fichiers
+  de protection, état du régime et préférences nécessaires sont conservés.
+- **Le schéma complet de `alpha_trade` uniquement**, avec une sélection de
+  lignes par table : 1 120 jours calendaires de bougies journalières et de
+  features/contexte macro, 7 jours de bougies intraday, quotes et options,
+  90 jours pour les autres événements. Le consensus conserve 14 jours et les
+  dépôts/documents SEC 30 jours par défaut, avec élargissement si la fraîcheur
+  configurée du LLM l'exige (âge maximal + 3 jours de marge). Les news gardent au moins la fenêtre de recalcul
+  sentiment + 45 jours de contexte + 3 jours de marge : **100 jours** avec la
+  configuration actuelle (52 + 45 + 3). Les dates futures des calendriers sont
+  conservées. Les états métier et référentiels restent complets.
+
+Les parents référencés par les lignes conservées sont ajoutés automatiquement,
+y compris pour les clés étrangères composées. Le manifeste chiffré/authentifié
+décrit la politique SQL et les comptes exacts de lignes exportées. Une table
+nouvelle non classée provoque un refus explicite, jamais une exclusion silencieuse.
+Les gros payloads fournisseurs bruts, labels de recherche et historiques de
+backtests gardent leur structure SQL mais pas leurs données. Les vieux
+intraday, dossiers de recherche, autres modèles et bases FR/CN sont exclus.
+
+Les lignes sont lues dans une seule transaction US **READ ONLY / consistent
+snapshot** ; les états des comptes ne sont pas tronqués selon leur ancienneté.
+Les `TIMESTAMP` sont exportés en UTC. Les triggers d'identité sont installés
+après les données afin de ne pas dépendre de l'ordre de chargement. La source
+ne reçoit ni table temporaire, ni suppression, ni réécriture de configuration.
+
+Le modèle choisi est raccordé **dans la copie archivée de `config.yaml`**. Le
+profil quotidien actif doit être compatible : par exemple, B impose H10,
+`compact_volatility` et, si activé, une tête anti-SL. Les autres fichiers du
+modèle ne sont pas modifiés et leurs empreintes restent valides.
+
+La restauration/commande autonome reconnaît ce profil dans le manifeste et
+ne sauvegarde/remplace/valide que `alpha_trade` : **les bases FR/CN ne sont pas
+touchées**, et leurs identifiants ne sont pas restaurés dans l'environnement.
+La prévisualisation affiche ce périmètre avant confirmation. Les fichiers gérés
+du projet cible sont remplacés comme dans le mode complet ; ses anciens modèles
+sont mis de côté avec les autres fichiers précédents, pas mélangés au modèle choisi.
+Les services restent arrêtés sur le PC cible jusqu'à reprise manuelle ; rien
+n'est arrêté sur le PC source. Ne pas activer simultanément deux watchers sur
+le même compte depuis deux PC sans organiser leur rôle de secours.
+
+Ce package vise la prédiction et les jobs quotidiens, **pas une reprise
+d'entraînement ni des backtests historiques longs**. Les dépendances Python et
+les éventuels modèles de sentiment externes au projet peuvent nécessiter un
+téléchargement sur le PC cible. Les contrôles de fraîcheur, droits fournisseurs,
+capital et risque continuent à s'appliquer après restauration.
+
+L'inventaire reste sans lecture de données SQL et donne les volumes des fichiers
+retenus ; il ne faut pas le prendre pour une estimation exacte du volume SQL
+compressé. Validation locale : politiques des 125 tables vérifiées par `EXPLAIN`,
+export des DDL/triggers testé sans données, restauration US isolée et retour
+arrière testés sur bases simulées. Aucune restauration réelle n'a été lancée.
+
+### Mode complet
+
 | Répertoire | Contenu |
 |---|---|
 | `donnees/alpha_trade` | Dump complet US, dont `news_raw`, pas le backup hebdomadaire partiel |
