@@ -1,5 +1,37 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-26 — Q051 TOP10 : baisse préalable puis reprise journalière
+
+**TERMINÉ / CONTRÔLES PASS / NO_GO DE CES RÈGLES.** Même référence
+Q051 témoin TOP10 à15 237,79USD / +280,94% / DD−40,45%, 2021–1octobre2026,
+4 000USD continus. Après TOP10%OracleH10→TOP10LONG per-symbol (score>.50,
+AUCcalibration≥.50), conserver une baisse≤−10%deJ−22àJ−2 puis une ou deux
+clôtures en hausse, entréeopenJ+1. Cas principal : deux clôtures. Témoin de
+baisse seule pour séparer la baisse du début de reprise. Respectivement
+9 890/3 131/1 506/722sélections avant risque ; aucun manque d'historique,
+aucun remplacement. SL5/open11, frais et dimensionnement identiques, sans
+B4/vol20/régime. Huit tests causaux passent, 9 890 signaux contrôlés en calcul
+scalaire ; 1 443 clôtures et 1 471 trades du témoin reproduits sans écart.
+
+| Cas | Capital final USD | Rendement | DD max intraday | Trades | Gagnants |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Témoin TOP10 | 15 237,79 | +280,94 % | −40,45 % | 1 471 | 35,62 % |
+| Baisse seule | 7 937,66 | +98,44 % | −42,38 % | 827 | 36,03 % |
+| Baisse + une clôture en hausse | 5 207,96 | +30,20 % | −41,75 % | 625 | 36,16 % |
+| **Baisse + deux clôtures (principal)** | **3 969,86** | **−0,75 %** | **−42,60 %** | **401** | **34,16 %** |
+
+Exposition moyenne88,72/60,44/47,20/30,29%. Le cas principal conserve211titres
+dans les signaux, en traite203, profit factor0,995 contre1,183. Il dégrade
+rendement etDD malgré moins de capital engagé. 2021–2022 plus défavorables que
+le témoin et participation à2023 beaucoup plus faible. Pas de recherche de
+seuils après résultat ni promotion ; période déjà étudiée, univers rétrospectif,
+intradaypartiel/repliOHLC conservés. Rapporteur corrigé séparément pour le nom
+`quantity` du CSV ; aucun effet sur les simulations. Quatre cas importés dans
+l'historique IHM. Même assistant, pas revue humaine indépendante.
+Pas E10 (pullback aprèsOracle) ni retour à la moyenne intraday. Archivesv2 :
+`artifacts/research/us_q051_decline_rebound/20261126-v2`.
+[Protocole et suivi](q051_decline_rebound_20261126.md).
+
 ## 2026-11-15 — Q051 simple bleu, TOP10 LONG contre TOP5 (+206,51 %)
 
 **TERMINÉ ET VALIDÉ — PLUS DE RENDEMENT, DD PLUS PROFOND.** Demande portant

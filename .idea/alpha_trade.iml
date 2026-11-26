@@ -151,7 +151,7 @@
       <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_scan_counts_preserves_mod0/project/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/artifacts/testtmp_dailybackup_20261125d/test_standalone_files_restore_0/target/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="D:\alpha_trade\.venv" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.14 (projets) (3)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
