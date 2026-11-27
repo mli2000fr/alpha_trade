@@ -33,6 +33,7 @@ def render_inventory_result(job):
             (Path(job)/'cancel.request').touch();st.info('Arrêt demandé à l’inventaire.')
     if result.get('status')=='INVENTORIED':
         st.success('Inventaire terminé.')
+        if result.get('data_policy'):st.json(result['data_policy'])
         st.dataframe(result['packages'],hide_index=True)
         with st.expander('Variables : noms, présence et origine (aucune valeur affichée)'):
             st.dataframe(result['variables'],hide_index=True)

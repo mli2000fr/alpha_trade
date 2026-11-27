@@ -1,10 +1,8 @@
 """Popin réutilisable affichant l'historique des bars OHLCV d'un symbole.
 
-Utilise ``@st.dialog`` (Streamlit ≥ 1.32). La source de bars est :
-1. EODHD (provider configuré par défaut côté IHM, cf.
-   :mod:`ihm.services.market_data_provider`) si un token est dispo ;
-2. Stooq comme fallback gratuit si EODHD échoue (token manquant, quota,
-   payload inattendu, etc.).
+Utilise ``market_data.bars_provider`` : Alpaca SIP historique, ou EODHD
+avec repli Stooq uniquement lorsque EODHD est explicitement configuré.
+Le compte Alpaca choisi et le fournisseur font partie de la clé de cache.
 
 API publique :
 
@@ -17,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -87,25 +86,64 @@ def _fetch_bars_stooq(symbol: str, *, start: date, end: date) -> pd.DataFrame:
     return _normalize_stooq_payload(payload if isinstance(payload, list) else [])
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def load_symbol_bars(symbol: str, lookback_days: int = 365) -> pd.DataFrame:
+def _fetch_bars_alpaca(symbol: str, *, start: date, end: date, account_id: str | None) -> pd.DataFrame:
+    from common.verified_http import verified_session
+    from service.alpaca.clientAlpaca import fetch_bars
+    try:
+        with verified_session() as session:
+            # The shared client compares provider timestamps to this boundary;
+            # keep it aware. A bare YYYY-MM-DD becomes naive in its post-filter.
+            payload=fetch_bars(symbol,'1Day',start_date=start.isoformat()+'T00:00:00+00:00',account_id=account_id,
+                               session=session,feed='sip')
+        frame=pd.DataFrame(payload)
+        if frame.empty:return frame
+        frame=frame.rename(columns=dict(t='date',o='open',h='high',l='low',c='close',v='volume'))
+        frame['date']=(pd.to_datetime(frame['date'],utc=True,errors='coerce')
+                       .dt.tz_convert('America/New_York').dt.tz_localize(None).dt.normalize())
+        fields=['open','high','low','close','volume']
+        for field in fields:
+            frame[field]=pd.to_numeric(frame[field],errors='coerce').replace([float('inf'),-float('inf')],float('nan'))
+        frame=frame.loc[frame.date.between(pd.Timestamp(start),pd.Timestamp(end)),['date',*fields]]
+        frame=frame.dropna(subset=['date','open','high','low','close'])
+        frame=frame.loc[frame[['open','high','low','close']].gt(0).all(axis=1)]
+        frame=frame.loc[frame.high.ge(frame[['open','low','close']].max(axis=1)) &
+                        frame.low.le(frame[['open','high','close']].min(axis=1))]
+        frame=frame.sort_values('date').drop_duplicates('date',keep='last').reset_index(drop=True)
+        frame.attrs['provider']='alpaca_sip'
+        return frame
+    except Exception as exc:
+        LOGGER.warning('Alpaca SIP historique indisponible pour %s : %s',symbol,type(exc).__name__)
+        return pd.DataFrame()
+
+
+def load_symbol_bars(symbol: str, lookback_days: int = 365, *, account_id: str | None = None) -> pd.DataFrame:
     """Charge les bars OHLCV daily d'un symbole sur ``lookback_days`` jours.
 
-    Essaie EODHD puis Stooq (fallback gratuit). Retourne un DataFrame vide en
-    cas d'échec total. Cache 15 min.
+    Respecte le fournisseur configuré ; SIP historique ne bascule pas vers IEX
+    ou EODHD en cas de refus. Cache 15 min, isolé par compte et fournisseur.
     """
     sym = (symbol or "").strip().upper()
     if not sym:
         return pd.DataFrame()
-    end = date.today()
-    start = end - timedelta(days=int(lookback_days))
+    from ihm.services.market_data_provider import get_bars_provider
+    end=datetime.now(ZoneInfo('America/New_York')).date()
+    return _cached_symbol_bars(sym,int(lookback_days),get_bars_provider(),account_id,end)
+
+
+@st.cache_data(ttl=900,show_spinner=False)
+def _cached_symbol_bars(sym,lookback_days,provider,account_id,end):
+    start=end-timedelta(days=lookback_days)
+    if provider=='alpaca':
+        bars=_fetch_bars_alpaca(sym,start=start,end=end,account_id=account_id)
+        bars.attrs['provider']='alpaca_sip'
+        return bars
     bars = _fetch_bars_eodhd(sym, start=start, end=end)
     if bars.empty:
         bars = _fetch_bars_stooq(sym, start=start, end=end)
     return bars
 
 
-def _render_dialog_body(symbol: str, default_lookback_days: int) -> None:
+def _render_dialog_body(symbol: str, default_lookback_days: int, *, account_id: str | None = None) -> None:
     sym = (symbol or "").strip().upper() or "—"
     st.markdown(f"### 📈 {sym} — historique des bars")
 
@@ -127,13 +165,21 @@ def _render_dialog_body(symbol: str, default_lookback_days: int) -> None:
     lookback_days = _PERIOD_OPTIONS[period_label]
 
     with st.spinner(f"Chargement des bars `{sym}`…"):
-        bars = load_symbol_bars(sym, lookback_days=lookback_days)
+        bars = load_symbol_bars(sym, lookback_days=lookback_days,account_id=account_id)
+
+    from ihm.services.market_data_provider import get_bars_provider
+    provider=get_bars_provider()
+    if provider=='alpaca':
+        st.caption('Source : Alpaca SIP historique, requête arrêtée à maintenant moins vingt minutes. '
+                   'Barres ajustées des splits ; la dernière bougie peut être en cours de formation.')
 
     if bars.empty:
-        st.warning(
-            f"Aucune barre disponible pour `{sym}` (EODHD et Stooq ont échoué). "
-            "Vérifie le token EODHD ou la connectivité réseau."
-        )
+        if provider=='alpaca':
+            st.warning(f'Aucune barre Alpaca SIP historique disponible pour `{sym}`. '
+                       'Vérifie les accès du compte sélectionné et la connexion réseau.')
+        else:
+            st.warning(f'Aucune barre disponible pour `{sym}` (EODHD et Stooq ont échoué). '
+                       'Vérifie le token EODHD ou la connectivité réseau.')
         return
 
     last = bars.iloc[-1]
@@ -164,9 +210,9 @@ def _render_dialog_body(symbol: str, default_lookback_days: int) -> None:
 # directement comme une fonction. On garde la fonction interne séparée pour
 # pouvoir la tester sans le décorateur.
 @st.dialog("Historique des bars", width="large")
-def show_symbol_bars_dialog(symbol: str, lookback_days: int = 365) -> None:
+def show_symbol_bars_dialog(symbol: str, lookback_days: int = 365, *, account_id: str | None = None) -> None:
     """Ouvre la popin Streamlit affichant l'historique des bars d'un symbole."""
-    _render_dialog_body(symbol, lookback_days)
+    _render_dialog_body(symbol, lookback_days,account_id=account_id)
 
 
 __all__ = [

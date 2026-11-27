@@ -18,6 +18,27 @@ def frame():
         'Score Oracle':.8,'Dernier prix ($)':5.66,'Date du prix':date(2026,10,16),'Retenu':True}])
 
 
+def test_frontend_change_invalidates_cached_component_without_restarting_server(monkeypatch):
+    calls=[]
+    cached=table._registered_table_component
+    monkeypatch.setattr(table,'component',lambda name,**kwargs:calls.append((name,kwargs)) or name)
+    table._registered_table_component.clear()
+    try:
+        first=table._registered_table_component('old read-only renderer',table.CSS)
+        assert table._registered_table_component('old read-only renderer',table.CSS)==first
+        current=table._registered_table_component(table.JS,table.CSS)
+        assert current!=first and len(calls)==2
+        assert 'checkbox.type' in calls[-1][1]['js']
+        # The actual mount passes the current contents, rather than relying on
+        # untracked globals in a zero-argument cached function.
+        received=[]
+        monkeypatch.setattr(table,'_registered_table_component',lambda *args:received.append(args) or (lambda **kw:kw))
+        assert table._table_component(key='active-session')=={'key':'active-session'}
+        assert received==[(table.JS,table.CSS)]
+    finally:
+        cached.clear()
+
+
 def test_button_column_is_in_table_after_symbol_not_a_period_label():
     payload=table.table_payload(frame())
     assert [c['label'] for c in payload['columns']][:4]==['Rang Oracle','Symbole','Graphique','Nom de l’entreprise']
@@ -88,6 +109,24 @@ graph(0).onclick(); assert.deepEqual(events.pop(),['open_symbol','FMC']);
 head().children[4].children[0].onclick();
 assert.equal(body().children[0].children[1].textContent,'FUN');
 graph(0).onclick(); assert.deepEqual(events.pop(),['open_symbol','FUN']);
+// Editable probability rows retain checkboxes by symbol, independent of sorting
+// and chart clicks. Inspecting a chart never changes the checked subset.
+const editable=structuredClone(PAYLOAD);editable.columns.at(-1).checkbox=true;
+editable.selected_symbols=['FUN'];
+const choiceRoot=new Element('div'),changes=[],opens=[];
+render({data:editable,parentElement:{querySelector:()=>choiceRoot},
+ setStateValue:(key,value)=>changes.push([key,value]),setTriggerValue:(key,value)=>opens.push([key,value])});
+const choiceBody=()=>choiceRoot.children[0].children[1];
+const choiceHead=()=>choiceRoot.children[0].children[0].children[0];
+const check=(i)=>choiceBody().children[i].children.at(-1).children[0];
+assert.equal(check(0).checked,true);assert.equal(check(1).checked,false);
+check(1).checked=true;check(1).onchange();
+assert.deepEqual(changes.pop(),['selected_symbols',['FUN','FMC']]);
+choiceHead().children[4].children[0].onclick();
+assert.equal(choiceBody().children[0].children[1].textContent,'FMC');
+assert.equal(check(0).checked,true);
+choiceBody().children[0].children[2].children[0].onclick();
+assert.deepEqual(opens.pop(),['open_symbol','FMC']);assert.equal(changes.length,0);
 '''.replace('SOURCE',json.dumps(table.JS)).replace('PAYLOAD',json.dumps(payload,ensure_ascii=True))
     result=subprocess.run([node,'--input-type=module','-'],input=script,text=True,encoding='utf-8',
         capture_output=True,timeout=20)
@@ -103,6 +142,8 @@ def test_real_streamlit_component_mounts_without_extra_buttons(monkeypatch,tmp_p
     app=AppTest.from_string('''
 import pandas as pd
 from ihm.components.prediction_review_table import render_prediction_review_table
+from ihm.components.prediction_review_table import _registered_table_component
+_registered_table_component.clear()
 render_prediction_review_table(pd.DataFrame([{'Rang Oracle':1,'Symbole':'FUN','Score Oracle':.9}]),
     key='inline_table',trade_date='2026-10-16')
 ''').run(timeout=20)

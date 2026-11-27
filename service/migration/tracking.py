@@ -47,7 +47,8 @@ RESTORE_FILES={'DATABASE_VALIDATION':(0,10),'STAGING':(10,55),'FILE_REPLACEMENT'
 FILES_ONLY={'VERIFYING':(0,30),'RESTORE_PREFLIGHT':(30,32),'STAGING':(32,75),
             'FILE_REPLACEMENT':(75,97),'FINALIZING':(97,99)}
 NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes','filesystem_errno','filesystem_winerror'}
-TEXT={'database','package','item','unit','error_code','failed_path','file_error','failure_reason','cause_type','recovery_source'}
+TEXT={'database','package','item','unit','error_code','failed_path','file_error','failure_reason','cause_type',
+      'recovery_source','archive_package','filesystem_operation','filesystem_path'}
 TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
           'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED','RECOVERED_PAUSED'}
 

@@ -3,10 +3,10 @@ from contextlib import nullcontext
 import hashlib
 from pathlib import Path
 import shutil
-import uuid
 
 from . import engine, inventory
-from .storage import atomic_json, canonical, checked_directory, open_manifest, safe_path, sha_file
+from .storage import (atomic_json,canonical,checked_directory,open_manifest,safe_path,sha_file,
+                      scratch_directory)
 from .tracking import emit
 
 
@@ -65,9 +65,9 @@ def restore_files_only(folder,target,password,report_dir,*,approved_plan,
         raise ValueError('Espace insuffisant pour préparer les fichiers')
     reports.mkdir(parents=True,exist_ok=False,mode=0o700)
     target.mkdir(parents=True,exist_ok=True)
-    stage=target.parent/('.alpha-migration-stage-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
-    previous=target.parent/('.alpha-migration-previous-'+uuid.uuid4().hex);previous.mkdir(mode=0o700)
-    failed=target.parent/('.alpha-migration-failed-'+uuid.uuid4().hex)
+    stage=scratch_directory(target.parent,'stage');stage.mkdir(mode=0o700)
+    previous=scratch_directory(target.parent,'previous');previous.mkdir(mode=0o700)
+    failed=scratch_directory(target.parent,'failed')
     atomic_json(reports/'local-directories.json',dict(staging=str(stage),previous=str(previous),failed=str(failed)))
     moves=[]
     old_marker=(target/engine.PENDING).read_bytes() if (target/engine.PENDING).exists() else None

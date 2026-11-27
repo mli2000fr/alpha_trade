@@ -6,6 +6,62 @@
 
 ## Repères actuels US/CN/FR et filtre GPT
 
+**19/11/2026 — configuration commune avec us_pipeline :** sur le marché US,
+la case **Utiliser la configuration du batch us_pipeline** est cochée par
+défaut. Le bouton **Lancer le pipeline — configuration us_pipeline** utilise
+le même lanceur que la page Batchs : paramètres de `config.yaml`, collectes
+de `batch.yaml`, étapes selon la séance, modèle et profil actifs, puis
+11/12 sur les autres comptes PAPER configurés. Le compte de la barre latérale
+ne remplace pas les comptes configurés du batch dans ce mode.
+
+Le profil courant est B témoin : TOP10 % Oracle H10 → jusqu'à TOP10 LONG
+par titre, score >0,50 et AUC ≥0,50, sans application de l'anti-SL ni filtres
+GPT/options. Entrée sans confirmation, SL5 %, sans TP/trailing, sortie open11,
+ordres DAY. La page relit les réglages, sans conserver une copie indépendante.
+Les résultats de 10 et les décisions de 11 par compte viennent des archives
+scellées de la sélection correspondante ; ils ne prouvent pas le remplissage.
+
+**Filtre GPT/DeepSeek du batch et de la page :** le premier paramètre de
+`config.yaml → us_pipeline` est `gpt_filter_enabled: false`.
+`true` active le filtre pour les prochains cycles du batch ; `false` le désactive.
+Quand **Utiliser la configuration du batch us_pipeline** est coché, cette valeur
+détermine aussi le réglage initial de **Filtrage GPT — probabilité de hausse sans SL,
+recherche Web après per-symbol** (le fournisseur suit la configuration).
+Un changement de ce paramètre met à jour la case, même dans une session IHM
+existante. Une modification manuelle de la case vaut pour ce lancement uniquement,
+sans écrire le YAML, y compris pour désactiver GPT alors que le batch l'active.
+Le parcours devient Oracle → LONG per-symbol → GPT/DeepSeek → validation humaine → risque → Winner.
+Le LLM reçoit uniquement les candidats LONG retenus, avec l'horizon du modèle
+(H10 pour B). Il peut en retirer, sans remplacement par les rangs suivants et
+sans SHORT automatique. Les protections et le dimensionnement B restent ceux
+du profil. Cette variante n'est donc plus la sélection exacte du témoin.
+
+`us_pipeline.gpt_filter_enabled` est la bascule du parcours B/Q051 ;
+`llm_directional_filter.enabled` reste celle de l'ancien parcours standard.
+`manual_opt_in_allowed: true` autorise à modifier la case dans l'écran. À `false`,
+elle reste figée sur la valeur configurée du batch : ce réglage ne désactive
+pas un filtre explicitement activé par `us_pipeline.gpt_filter_enabled`.
+Cocher la case ne lance aucun appel :
+les appels payants ont lieu seulement au lancement de l'étape10. Les réponses
+sont archivées dans les tables LLM existantes ; une réponse invalide bloque
+la publication, sans repli sur les candidats non filtrés. La sélection scellée
+est ensuite partagée entre les comptes, sans réinterroger le LLM pour chacun.
+Le rattrapage conserve ses choix initiaux ; la case ne modifie pas un ancien run.
+**Évolution du 20/11/2026 :** les nouvelles analyses de ce parcours estiment la
+probabilité d'une sortie open(H+1) au-dessus de l'entrée sans toucher le SL.
+Web est obligatoire, notamment pour compléter le consensus et les informations
+locales absentes. Le tableau est trié par cette estimation, avec cases décochées
+et bouton **Valider la sélection**. Le batch attend la validation avant 11 ;
+aucun achat ne part automatiquement de la seule réponse du LLM. L'estimation
+n'est pas calibrée. [Définition, limites et traces](../ml/llm_probabilite_hausse_sans_sl_20261120.md).
+
+Le suivi et les logs restent dans le centre d'exécution. Le contrôle de clôture
+US est conservé ; le bouton de rattrapage n'apparaît que pour une séance
+éligible. Décochez la case pour retrouver les paramètres personnalisés,
+l'entraînement et les lancements d'étapes indépendantes. Ces réglages
+personnalisés sont conservés ; ils n'interviennent pas dans le mode commun.
+Ouvrir la page ne lance aucun pipeline, watcher, achat ou appel LLM.
+
 **01/11/2026 — reprise sécurisée :** sous le centre d'exécution, le panneau
 **🔓 Déverrouiller une reprise — étapes 11/12 et watchers** apparaît seulement
 si un verrou concerné existe. Choisir le verrou, vérifier, puis confirmer.

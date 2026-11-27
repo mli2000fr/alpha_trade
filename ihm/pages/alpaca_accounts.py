@@ -33,6 +33,33 @@ from service.broker_failover import build_failover_doctrine_summary
 _PAGE_ACCOUNT_SELECT_KEY = "alpaca_accounts_page_account_id"
 
 
+def _positions_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+	"""Presentation copy only; broker values and trading callbacks stay separate."""
+	result=frame.copy()
+	for field in ['qty','avg_entry_price','current_price','market_value','unrealized_pl','unrealized_plpc']:
+		if field in result:result[field]=pd.to_numeric(result[field],errors='coerce')
+	if 'unrealized_plpc' in result:result['unrealized_plpc']*=100
+	if 'side' in result:result['side']=result.side.replace({'long':'LONG — achat','short':'SHORT — vente à découvert'})
+	for field in ['asset_marginable','asset_shortable']:
+		if field in result:result[field]=result[field].map({True:'Oui',False:'Non'})
+	return result
+
+
+def _positions_column_config() -> dict[str, Any]:
+	return {
+		'symbol':st.column_config.TextColumn('Symbole',help='Code boursier du titre.'),
+		'side':st.column_config.TextColumn('Sens de la position',help='LONG : détention achetée. SHORT : vente à découvert.'),
+		'qty':st.column_config.NumberColumn('Quantité détenue',help='Nombre d’actions actuellement détenues selon Alpaca.'),
+		'avg_entry_price':st.column_config.NumberColumn('Prix moyen d’entrée ($)',format='%.2f $',help='Prix moyen des achats ou ventes à découvert ayant ouvert la position.'),
+		'current_price':st.column_config.NumberColumn('Dernier cours ($)',format='%.2f $',help='Dernier prix communiqué par le broker pour cette position.'),
+		'market_value':st.column_config.NumberColumn('Valeur de la position ($)',format='%.2f $',help='Valeur de marché communiquée par Alpaca, signée selon le sens de la position.'),
+		'unrealized_pl':st.column_config.NumberColumn('Gain / perte latent(e) ($)',format='%.2f $',help='Gain ou perte encore non réalisé : la position reste ouverte.'),
+		'unrealized_plpc':st.column_config.NumberColumn('Gain / perte latent(e) (%)',format='%.2f %%',help='Variation de la position depuis son prix moyen d’entrée. −7 signifie une perte latente de 7 %.'),
+		'asset_marginable':st.column_config.TextColumn('Éligible à la marge',help='Le titre peut être financé sur marge chez Alpaca ; cela ne signifie pas que cette position utilise un levier.'),
+		'asset_shortable':st.column_config.TextColumn('Vente à découvert autorisée',help='Le broker autorise la vente à découvert de ce titre ; le sens détenu est indiqué séparément.'),
+	}
+
+
 def _format_currency(value: object) -> str:
 	try:
 		amount = float(cast(float | int | str, value))
@@ -271,8 +298,10 @@ def render() -> None:
 					st.rerun()
 
 				render_symbol_table(
-					positions_df,
+					_positions_display_frame(positions_df),
 					key="alpaca_live_positions",
+					column_config=_positions_column_config(),
+					bars_account_id=selected_account_id,
 					symbol_col="symbol",
 					title="📦 Positions ouvertes (broker)",
 					height=320,
@@ -297,6 +326,7 @@ def render() -> None:
 				render_symbol_table(
 					orders_df,
 					key="alpaca_live_orders",
+					bars_account_id=selected_account_id,
 					symbol_col="symbol",
 					title="🧾 Historique des ordres (broker)",
 					height=320,
@@ -355,6 +385,7 @@ def render() -> None:
 			render_symbol_table(
 				canonical_orders_df,
 				key="alpaca_canonical_orders",
+				bars_account_id=selected_account_id,
 				symbol_col="symbol",
 				title="📋 Ordres canoniques d'exécution (DB)",
 				height=260,

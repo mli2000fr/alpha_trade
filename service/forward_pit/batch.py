@@ -2503,7 +2503,13 @@ def eodhd_news_ingestion_sync(engine, cfg, run_id, dry_run):
     return collect(engine, cfg, run_id, dry_run)
 
 
+def us_watcher_services(engine, cfg, run_id, dry_run):
+    from service.forward_pit.us_watcher_services import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "us_watcher_services": us_watcher_services,
     "eodhd_news_ingestion_sync": eodhd_news_ingestion_sync,
     "eodhd_ipo_calendar_sync": eodhd_ipo_calendar_sync,
     "eodhd_consensus_snapshot": eodhd_consensus_snapshot,
@@ -2534,9 +2540,16 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
 
 def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None,
             ipo_backfill_dates: tuple[str, str] | None = None,
-            us_pipeline_recovery_date: str | None = None) -> tuple[str, Outcome]:
+            us_pipeline_recovery_date: str | None = None,
+            us_pipeline_llm_filter: bool | None = None) -> tuple[str, Outcome]:
     config = load_batch_config(config_path); cfg = config.get(batch_name)
     if not isinstance(cfg, dict): raise KeyError(f"Section {batch_name} absente de batch.yaml")
+    if us_pipeline_llm_filter is not None:
+        if type(us_pipeline_llm_filter) is not bool:
+            raise ValueError('Option GPT du lancement : booléen requis')
+        if batch_name != 'us_pipeline' or us_pipeline_recovery_date is not None:
+            raise ValueError('GPT manuel réservé à un nouveau lancement us_pipeline')
+        cfg = dict(cfg, _manual_q051_llm_filter=us_pipeline_llm_filter)
     if us_pipeline_recovery_date is not None:
         if batch_name != 'us_pipeline':
             raise ValueError('Session recovery is only supported for us_pipeline')
@@ -2555,7 +2568,7 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
-    if batch_name in ('us_pipeline', 'public_macro_snapshot_sync', 'eodhd_consensus_snapshot', 'eodhd_ipo_calendar_sync', 'eodhd_news_ingestion_sync') and engine.url.database != 'alpha_trade':
+    if batch_name in ('us_pipeline', 'us_watcher_services', 'public_macro_snapshot_sync', 'eodhd_consensus_snapshot', 'eodhd_ipo_calendar_sync', 'eodhd_news_ingestion_sync') and engine.url.database != 'alpha_trade':
         raise ValueError('US pipeline/public macro requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
@@ -2565,7 +2578,7 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
     try:
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
-        if batch_name == 'us_pipeline' and outcome.details.get('skip_reason'):
+        if batch_name in ('us_pipeline', 'us_watcher_services') and outcome.details.get('skip_reason'):
             # Stable database lifecycle status (VARCHAR(24)). The precise reason
             # remains in details_json; concatenation exceeded the column width
             # and left an already-finished, skipped run falsely RUNNING.
@@ -2616,12 +2629,18 @@ def main() -> None:
     parser.add_argument("--batch-config")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument('--us-pipeline-recovery-date', help='Séance clôturée à rattraper avant la prochaine ouverture US')
+    llm_override = parser.add_mutually_exclusive_group()
+    llm_override.add_argument('--us-pipeline-llm-filter', dest='us_pipeline_llm_filter', action='store_const', const=True, default=None,
+                             help='Activer le filtre LLM Q051 pour ce lancement manuel')
+    llm_override.add_argument('--no-us-pipeline-llm-filter', dest='us_pipeline_llm_filter', action='store_const', const=False,
+                             help='Désactiver le filtre LLM Q051 pour ce lancement manuel')
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(); logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
         status, outcome = execute(
             args.batch, dry_run=args.dry_run, config_path=args.batch_config,
             **({'us_pipeline_recovery_date':args.us_pipeline_recovery_date} if args.us_pipeline_recovery_date else {}),
+            **({'us_pipeline_llm_filter':args.us_pipeline_llm_filter} if args.us_pipeline_llm_filter is not None else {}),
         )
     except Exception as exc:
         failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)

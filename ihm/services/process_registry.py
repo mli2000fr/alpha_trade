@@ -1421,8 +1421,6 @@ def _run_pipeline_workflow(
                 return
 
             step_label = f"{step.num}. {step.name}"
-            _update_workflow_record(managed, workflow_current_step_key=step.key,
-                                    workflow_current_step_label=step_label)
             if before_step is not None:
                 preparation = before_step(step, options, managed.stop_event)
                 if preparation is not None:
@@ -1431,6 +1429,11 @@ def _run_pipeline_workflow(
                 _finalize_workflow_record(managed, status="stopped", returncode=-3,
                                           workflow_completed_steps=completed_steps)
                 return
+            # Preparation may wait for human approval and expire without ever
+            # starting risk. Keep the previous actual step until it succeeds;
+            # recovery must not mistake that wait for an attempted order path.
+            _update_workflow_record(managed, workflow_current_step_key=step.key,
+                                    workflow_current_step_label=step_label)
             _append_workflow_event(managed, f"=== [{index}/{total_steps}] Démarrage {step_label} ===")
             child_record = start_pipeline_run(
                 step.key,
@@ -1899,6 +1902,41 @@ def start_pipeline_workflow(
     return record
 
 
+def _external_pipeline_records() -> dict[str, dict[str, object]]:
+    """Observe the real lock owner, without adopting or stopping its processes.
+
+    A scheduled runner owns a separate Python registry. Its absence from this
+    Streamlit process is not proof of termination. Read canonical receipts only
+    when the exact workflow lock still belongs to a live, non-reused PID.
+    """
+    from ihm.services import pipeline_lock
+    try:
+        holder = pipeline_lock._read_lock(pipeline_lock._lock_path('pipeline'))
+        if (not holder or holder.get('owner') != 'pipeline_workflow'
+                or int(holder.get('pid') or 0) == os.getpid()
+                or not pipeline_lock._is_lock_active(holder)):
+            return {}
+        run_id = str(holder.get('run_id') or '')
+        if not RECOVERABLE_RUN_ID_RE.fullmatch(run_id):
+            return {}
+        parent = _load_record_artifact(RUNS_DIR/'pipeline_workflow'/run_id)
+        if (not parent or parent.get('run_id') != run_id or parent.get('run_kind') != 'workflow'
+                or parent.get('status') not in {'scheduled','starting','running'} or parent.get('finished_at')):
+            return {}
+        snapshots = {run_id: dict(parent, external_process=True, is_active=True)}
+        child_id = str(parent.get('workflow_current_child_run_id') or '')
+        step_key = str(parent.get('workflow_current_step_key') or '')
+        if RECOVERABLE_RUN_ID_RE.fullmatch(child_id) and re.fullmatch(r'[A-Za-z0-9_-]+', step_key):
+            child = _load_record_artifact(RUNS_DIR/step_key/child_id)
+            if (child and child.get('run_id') == child_id and child.get('parent_run_id') == run_id
+                    and child_id in (parent.get('workflow_child_run_ids') or [])):
+                snapshots[child_id] = dict(child, external_process=True,
+                    is_active=child.get('status') in {'scheduled','starting','running'})
+        return snapshots
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
 def list_active_pipeline_runs() -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     for run_id in list(_ACTIVE_RUNS.keys()):
@@ -1911,6 +1949,9 @@ def list_active_pipeline_runs() -> list[dict[str, object]]:
         if snapshot is not None and (snapshot.get('is_active', snapshot.get('status') in {'scheduled','starting','running'})
                                      or snapshot.get('workflow_finalizing', False)):
             snapshots.append(snapshot)
+    known = {item['run_id'] for item in snapshots}
+    snapshots.extend(item for run_id,item in _external_pipeline_records().items()
+                     if run_id not in known and item.get('is_active'))
     snapshots.sort(key=lambda item: str(item.get("executed_at", "")), reverse=True)
     return snapshots
 
@@ -1923,6 +1964,9 @@ def poll_pipeline_run(run_id: str) -> dict[str, object] | None:
     if workflow is not None:
         return _poll_workflow_run(run_id, workflow)
     if managed is None:
+        external = _external_pipeline_records().get(run_id)
+        if external is not None:
+            return external
         history = _read_history_index()
         return history.get(run_id)
 
@@ -1995,6 +2039,7 @@ def load_pipeline_history() -> list[dict[str, object]]:
     ``history_index.json`` (1.5 Mo) sans toucher au système de fichiers.
     """
     global _RECOVERY_DONE
+    external = _external_pipeline_records()
     with _REGISTRY_LOCK:
         index = _read_history_index()
         if not _RECOVERY_DONE:
@@ -2006,6 +2051,10 @@ def load_pipeline_history() -> list[dict[str, object]]:
             index.update(recovered)
         active_step_run_ids = set(_ACTIVE_RUNS.keys())
         active_workflow_run_ids = set(_ACTIVE_WORKFLOWS.keys())
+        active_step_run_ids.update(rid for rid,row in external.items()
+                                   if row.get('run_kind') != 'workflow' and row.get('is_active'))
+        active_workflow_run_ids.update(rid for rid,row in external.items()
+                                       if row.get('run_kind') == 'workflow' and row.get('is_active'))
         normalized_index: dict[str, dict[str, object]] = {}
         mutated = bool(recovered)
         for run_id, payload in index.items():
@@ -2019,6 +2068,9 @@ def load_pipeline_history() -> list[dict[str, object]]:
         index = normalized_index
         if mutated:
             _write_history_index(index)
+    # Read-through overlay also repairs a stale "stopped" UI index without
+    # overwriting the owner's receipts or claiming its processes locally.
+    index = {**index, **external}
     history = [record for record in index.values() if not record.get("history_deleted")]
     history.sort(
         key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),

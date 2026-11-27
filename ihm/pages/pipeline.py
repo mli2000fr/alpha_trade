@@ -2166,6 +2166,21 @@ def render() -> None:
         render_cn_research_view("pipeline")
         return
 
+    from ihm.components.pipeline_batch_defaults import MODE_KEY, render as render_batch_defaults
+    use_batch_defaults = st.checkbox(
+        'Utiliser la configuration du batch us_pipeline', value=True, key=MODE_KEY,
+        help='Valeurs par défaut du batch quotidien, avec filtre GPT manuel facultatif. Décochez pour les autres réglages et étapes personnalisés.')
+    if use_batch_defaults:
+        active_runs, _ = _merge_runs()
+        shared_options = render_batch_defaults(db_config=get_runtime_db_config(), active_runs=active_runs)
+        _render_runtime_center()
+        if shared_options is not None:
+            from ihm.components.pipeline_unlock import render_pipeline_unlock
+            _, unlock_records, _, _, _ = _build_pipeline_run_context()
+            render_pipeline_unlock(get_sqlalchemy_engine, shared_options, unlock_records)
+        render_pending_local_symbol_bars_dialog()
+        return
+
     from common.q051_paper import settings as q051_settings
     active_paper = q051_settings()
     if active_paper['enabled']:

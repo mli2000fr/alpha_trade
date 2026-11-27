@@ -5,7 +5,8 @@ Summary: Enterprise-grade US Swing Trade system
 Requires-Python: >=3.12
 Requires-Dist: pymysql
 Requires-Dist: cryptography
-Requires-Dist: requests
+Requires-Dist: requests>=2.32.2
+Requires-Dist: jsonschema>=4
 Requires-Dist: certifi
 Requires-Dist: python-dotenv
 Requires-Dist: sqlalchemy
@@ -21,16 +22,21 @@ Requires-Dist: lightning
 Requires-Dist: torchmetrics
 Requires-Dist: lightgbm
 Requires-Dist: streamlit
+Requires-Dist: psutil>=5.9
 Requires-Dist: pyyaml
 Requires-Dist: vectorbt>=0.26
 Requires-Dist: plotly
 Requires-Dist: kaleido
 Requires-Dist: matplotlib
+Requires-Dist: yfinance>=0.2
+Requires-Dist: baostock>=0.8.9
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: pytest-cov>=5; extra == "dev"
 Requires-Dist: pytest-xdist>=3; extra == "dev"
 Requires-Dist: pytest-timeout>=2; extra == "dev"
+Requires-Dist: pytest-benchmark>=4; extra == "dev"
+Requires-Dist: hypothesis>=6; extra == "dev"
 Requires-Dist: ruff>=0.4; extra == "dev"
 Requires-Dist: mypy>=1.10; extra == "dev"
 Requires-Dist: pandas-stubs; extra == "dev"
@@ -44,7 +50,6 @@ Requires-Dist: prometheus-client>=0.20; extra == "observability"
 Provides-Extra: ml-challengers
 Requires-Dist: catboost; extra == "ml-challengers"
 Provides-Extra: cross-check
-Requires-Dist: yfinance>=0.2; extra == "cross-check"
 Provides-Extra: formal
 Requires-Dist: z3-solver>=4.13; extra == "formal"
 Provides-Extra: reporting
@@ -60,3 +65,5 @@ Requires-Dist: cyclonedx-bom>=4; extra == "security"
 Requires-Dist: pip-audit>=2.7; extra == "security"
 Provides-Extra: mutation
 Requires-Dist: mutmut>=2.5; extra == "mutation"
+Provides-Extra: orchestration
+Requires-Dist: prefect>=2.0; extra == "orchestration"
