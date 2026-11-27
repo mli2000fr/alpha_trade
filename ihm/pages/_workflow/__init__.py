@@ -867,7 +867,10 @@ def _render_runtime_center() -> None:
                 cols[1].markdown(_status_badge(str(run.get("status", "running"))))
                 cols[2].markdown(f"⏱️ {format_duration_hhmmss(run.get('duration_seconds', 0.0))}")
                 cols[3].markdown(f" `{run.get('account_id') or 'global'}`")
-                if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True):
+                if cols[4].button("⏹️ Arrêter", key=f"stop_run_{run_id}", use_container_width=True,
+                                  disabled=bool(run.get('external_process')),
+                                  help=('Run géré par le lanceur du batch, suivi ici en lecture seule.'
+                                        if run.get('external_process') else None)):
                     stop_pipeline_run(run_id)
                     _rerun_app()
                 scheduled_caption = _build_scheduled_countdown_caption(run)
@@ -892,6 +895,8 @@ def _render_runtime_center() -> None:
                     _, _, progress_fraction, progress_label = _workflow_progress(run)
                     st.progress(progress_fraction)
                     st.caption(progress_label)
+                if run.get('external_process'):
+                    st.caption('Lancé par le batch dans un autre processus ; état lu depuis ses reçus actifs.')
     else:
         st.info("Aucun run actif pour le moment.")
 
