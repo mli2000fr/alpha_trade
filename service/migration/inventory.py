@@ -36,7 +36,7 @@ def category(relative):
     return 'application'
 
 
-def scan(root,*,on_progress=None,cancel=None):
+def scan(root,*,on_progress=None,cancel=None,include=None):
     root=Path(root).resolve();result={k:[] for k in ('application','configuration','modeles','etats-et-archives')}
     pending=[root];files=0;size=0;directories=0;last_tick=-1.
     def tick(current,force=False):
@@ -53,7 +53,7 @@ def scan(root,*,on_progress=None,cancel=None):
         with os.scandir(current) as entries:
             for entry in entries:
                 relative=(current/entry.name).relative_to(root)
-                if excluded(relative):continue
+                if excluded(relative) or include is not None and not include(relative):continue
                 # Scandir caches attributes. Check each ancestor and entry for
                 # links instead of resolving every single file through Windows.
                 junction=entry.is_junction() if hasattr(entry,'is_junction') else Path(entry.path).is_junction()
@@ -79,19 +79,26 @@ def validate_portable_names(entries,*,cancel=None):
                 raise ValueError(f"Fichier non portable à corriger avant sauvegarde : {row['path']} ({exc})") from exc
 
 
-def preview(root,*,on_progress=None,cancel=None):
+def preview(root,*,on_progress=None,cancel=None,backup_profile='full',selected_model=None):
     """Only metadata leaves this function; no SQL or provider dependency."""
     from . import environment
     from .tracking import emit
     emit(on_progress,'INVENTORY_SCAN')
-    entries=scan(root,on_progress=on_progress,cancel=cancel)
+    from .profiles import US_DAILY,scope,file_included,selected_config,policy_summary
+    scope(backup_profile)
+    include=None
+    if backup_profile==US_DAILY:
+        selected_config(root,selected_model)
+        include=lambda path:file_included(path,selected_model)
+    entries=scan(root,on_progress=on_progress,cancel=cancel,include=include)
     validate_portable_names(entries,cancel=cancel)
     names=[r['path'] for records in entries.values() for r in records]
     emit(on_progress,'ENVIRONMENT_INVENTORY')
     captured=environment.capture(root,names,on_progress=on_progress,cancel=cancel)
     emit(on_progress,'FINISHED')
     return dict(status='INVENTORIED',packages=[dict(package=k,fichiers=len(v),octets=sum(f['size'] for f in v))
-        for k,v in entries.items()],variables=captured['variables'])
+        for k,v in entries.items()],variables=captured['variables'],
+        **({'data_policy':policy_summary(selected_model,root)} if backup_profile==US_DAILY else {}))
 
 
 def installed_versions(root):

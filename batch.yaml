@@ -11,6 +11,25 @@
 # Les fuseaux NY sont conservés pour les collecteurs liés à la séance US.
 # Cela ne garantit pas qu'un traitement long se termine avant 07:30.
 
+us_watcher_services:
+  priority: P0
+  enabled: true
+  status: ACTIVE
+  market_code: US_EQ
+  provider: internal_watcher_supervisor
+  timezone: America/New_York
+  run_hours: "9,10,11,12,13,14,15"
+  run_minutes: "30"
+  run_days: "1,2,3,4,5"
+  account_ids: [default, test1, test2]
+  startup_timeout_seconds: 120
+  description: "Vérifier les services locaux 12.bis des trois comptes Alpaca PAPER ; démarrer uniquement les watchers absents, sans interrompre ceux déjà lancés."
+  tables: "watcher_heartbeats,execution_locks,pit_collection_runs"
+  universe_scope: "Comptes PAPER default, test1, test2 ; tous les titres surveillés par le service post-exécution habituel."
+  execution_notice: "Chaque heure de 09:30 à 15:30 New York pendant la séance régulière US. Calendrier strict : jours fériés et clôtures anticipées respectés, même en lancement manuel. Les services continuent après la fin du batch et ne sont pas arrêtés à la clôture."
+  research_notice: "Même service que 12.bis, démarrage séquentiel et confirmation par heartbeat. Un processus existant non sain ou incompatible est signalé, sans doublon ni redémarrage forcé. Les étapes 10/11/12 ne sont pas lancées par ce batch."
+  log_file: log/batch/us_watcher_services.txt
+
 us_pipeline:
   priority: P0
   enabled: true

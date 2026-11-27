@@ -13,6 +13,7 @@ import time
 from . import engine, environment, inventory
 from .mysql import Connection, DATABASES, MySQL
 from .storage import atomic_json
+from .profiles import FULL,US_DAILY,scope,payload_scope
 from .tracking import Progress,ConsoleProgress,emit
 from .locking import MigrationLockError,worker_identity
 from .file_capture import failure_details
@@ -24,8 +25,20 @@ def worker_status(job,status,**fields):
 
 def adapter(request):
     options={k:request.get(k) or None for k in ('mysqldump','mysql')}
+    if request.get('folder') and request['action'] in ('plan','restore','restore_files'):
+        from .storage import open_manifest
+        names=payload_scope(open_manifest(Path(request['folder'])/'manifest.json',request['password']))
+    elif request['action']=='recover':
+        from .storage import open_manifest,decrypted_input
+        folder=Path(request['preimage'])
+        doc=open_manifest(folder/'recovery.json',request['password'])
+        with decrypted_input(folder,doc['recovery'],request['password']) as stream:
+            names=payload_scope(json.load(stream))
+    else:names=scope(request.get('backup_profile',FULL))
+    # Keep the old constructor call contract for existing full-backup clients.
+    if names!=DATABASES:options['database_names']=names
     if request.get('connections'):
-        return MySQL({n:Connection(**request['connections'][n]) for n in DATABASES},**options)
+        return MySQL({n:Connection(**request['connections'][n]) for n in names},**options)
     return MySQL.source(request['root'],**options)
 
 
@@ -37,11 +50,14 @@ def run_request(request,job,*,tracker=None):
     tracker=tracker or Progress(job,action,mirror=request.get('output') if action=='export' else request.get('report_dir'))
     report=tracker.update
     if action=='inventory':
-        return inventory.preview(request['root'],on_progress=report,cancel=cancel)
+        return inventory.preview(request['root'],on_progress=report,cancel=cancel,
+            backup_profile=request.get('backup_profile',FULL),selected_model=request.get('selected_model'))
     if action=='verify':
         result=engine.verify(request['folder'],password,cancel=cancel,on_progress=report)
         emit(report,'FINISHED')
-        return dict(status='VERIFIED',backup_id=result['id'],source_mode=result.get('source_mode'))
+        return dict(status='VERIFIED',backup_id=result['id'],source_mode=result.get('source_mode'),
+            backup_profile=result.get('backup_profile',FULL),databases=list(payload_scope(result)),
+            data_policy=result.get('data_policy'))
     if action in ('plan_files_only','restore_files_only'):
         # Deliberately before adapter(): no MySQL client, credentials or connection.
         from .files_only import inspect_files_only,restore_files_only
@@ -59,11 +75,15 @@ def run_request(request,job,*,tracker=None):
     db=adapter(request)
     db.on_progress=report
     if action=='export':
-        result=engine.export(request['root'],request['output'],password,db,cancel=cancel,on_progress=report)
+        result=engine.export(request['root'],request['output'],password,db,cancel=cancel,on_progress=report,
+            backup_profile=request.get('backup_profile',FULL),selected_model=request.get('selected_model'))
         return dict(status='COMPLETE',folder=request['output'],backup_id=result['id'],source_mode='online',
-            archived_file_versions_recovered=result.get('archived_file_versions_recovered',0))
+            archived_file_versions_recovered=result.get('archived_file_versions_recovered',0),
+            backup_profile=result.get('backup_profile',FULL),data_policy=result.get('data_policy'))
     if action=='plan':
-        result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report)
+        result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report,
+            preserve_existing_venv=not bool(request.get('rebuild_venv',True)),
+            skip_python_version_check=bool(request.get('skip_python_version_check',False)))
         emit(report,'FINISHED');return result
     if action in ('restore','restore_files'):
         deadline=time.monotonic()+int(request.get('wait_seconds',900))
@@ -76,7 +96,9 @@ def run_request(request,job,*,tracker=None):
         if action=='restore':
             report=engine.restore(request['folder'],request['target'],password,db,request['report_dir'],
                 approved_plan=request['approved_plan'],cancel=cancel,on_progress=tracker.update,
-                skip_existing_backup=bool(request.get('skip_existing_backup',False)))
+                skip_existing_backup=bool(request.get('skip_existing_backup',False)),
+                preserve_existing_venv=not bool(request.get('rebuild_venv',True)),
+                skip_python_version_check=bool(request.get('skip_python_version_check',False)))
         else:
             report=engine.restore_files(request['folder'],request['target'],password,db,request['report_dir'],
                 cancel=cancel,on_progress=tracker.update)
@@ -135,7 +157,7 @@ def interactive(action,*,backup_dir=None,target_dir=None):
     else:
         plan=run_console(request,job/'plan');print(json.dumps(plan,ensure_ascii=False,indent=2))
         request.update(action='restore',approved_plan=plan['fingerprint'],report_dir=str(job/'rapport'))
-    print('Les trois bases locales seront remplacées. Les services doivent rester arrêtés sur le PC cible.')
+    print('Bases locales remplacées : '+', '.join(plan.get('target_database_names',DATABASES) if action!='recover' else ['selon le point de récupération'])+'. Les services doivent rester arrêtés sur le PC cible.')
     if input('Saisir REMPLACER pour continuer : ').strip()!='REMPLACER':return
     if action=='restore':request['rebuild_venv']=input('Recréer le nouvel environnement Python ? [O/n] ').strip().lower()!='n'
     result=run_console(request,job);print(json.dumps(result,ensure_ascii=False,indent=2))

@@ -1,4 +1,4 @@
-"""Three explicit schemas only. Credentials are stdin/env, never argv/logs."""
+"""Explicit full (US/FR/CN) or US-only routes. No credentials in argv/logs."""
 from dataclasses import dataclass,field
 import gzip
 import hashlib
@@ -31,8 +31,10 @@ class Connection:
 
 
 class MySQL:
-    def __init__(self,connections,*,mysqldump=None,mysql=None):
-        if set(connections)!=set(DATABASES):raise ValueError('Les trois routes MySQL explicites sont requises')
+    def __init__(self,connections,*,mysqldump=None,mysql=None,database_names=DATABASES):
+        if tuple(database_names) not in (DATABASES,('alpha_trade',)) or set(connections)!=set(database_names):
+            raise ValueError('Routes MySQL explicites incompatibles avec le profil')
+        self.database_names=tuple(database_names)
         self.connections=connections
         self.dump_tool=self.tool(mysqldump,'mysqldump')
         self.mysql_tool=self.tool(mysql,'mysql')
@@ -49,8 +51,10 @@ class MySQL:
     def source(cls,root,**kwargs):
         root=Path(root);doc=yaml.safe_load((root/'config/databases.yaml').read_text(encoding='utf-8'))
         connections={}
-        for alias in ('us_primary','fr_primary','cn_primary'):
+        aliases=('us_primary',) if kwargs.get('database_names')==('alpha_trade',) else ('us_primary','fr_primary','cn_primary')
+        for alias in aliases:
             route=doc['databases'][alias];db=route['database']
+            if db not in kwargs.get('database_names',DATABASES):continue
             if db not in DATABASES:raise ValueError('Route MySQL hors périmètre')
             override=os.getenv(route.get('database_env',''))
             if override and override!=db:raise ValueError('Nom de base environnement différent du contrat des trois bases')
