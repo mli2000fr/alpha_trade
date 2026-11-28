@@ -93,8 +93,8 @@ def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits
     at.button(key='bt_winner_profile_comparison').click().run(timeout=30)
     assert not at.exception
     assert len(at.dataframe)>=1
-    assert at.get('imgs')
-    assert len(at.dataframe[0].value)==8
+    assert at.get('plotly_chart')
+    assert len(at.dataframe[0].value)==5
 
     # Both new choices must reach the command, then reapply after manual edits.
     at.selectbox(key='bt_winner_profile_choice').select('q051_vol20_regime_top10').run(timeout=30)
