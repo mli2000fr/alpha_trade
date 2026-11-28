@@ -105,21 +105,36 @@ def curve_checkbox_key(label):
     return 'bt_winner_compare_curve_'+hashlib.sha256(label.encode('utf-8')).hexdigest()[:16]
 
 
+def closing_drawdowns(curves):
+    """Loss from the running closing peak, including the initial $4,000."""
+    return 100.*(curves/curves.cummax().clip(lower=4000.)-1.)
+
+
 def comparison_figure(curves, selected=None):
     import plotly.graph_objects as go
-    figure=go.Figure()
+    from plotly.subplots import make_subplots
+    figure=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=.10,
+        row_heights=[.65,.35],subplot_titles=('Capital valorisé','Drawdown aux clôtures'))
     colors=['#2455cc','#008f72','#ee8b22','#8c44ac','#b17b28','#ce3458','#009eb1','#00a35b','#737373']
     palette=dict(zip(CURVE_LABELS,colors))
-    for label in (list(curves) if selected is None else selected):
+    labels=list(curves) if selected is None else selected
+    drawdowns=closing_drawdowns(curves.loc[:,labels])
+    for label in labels:
         figure.add_trace(go.Scatter(x=curves.index,y=curves[label],name=label,mode='lines',
-            line=dict(color=palette.get(label),width=1.8),
-            hovertemplate='%{y:,.2f} $<extra>%{fullData.name}</extra>'))
-    figure.update_layout(title='Capital valorisé — variantes sélectionnées',height=570,
-        yaxis_title='Capital ($), départ 4 000',hovermode='x unified',dragmode='zoom',
-        margin=dict(l=15,r=15,t=55,b=90),
-        legend=dict(orientation='h',yanchor='top',y=-.18,xanchor='left',x=0,font=dict(size=10)))
+            legendgroup=label,line=dict(color=palette.get(label),width=1.8),
+            hovertemplate='%{y:,.2f} $<extra>%{fullData.name}</extra>'),row=1,col=1)
+    for label in labels:
+        figure.add_trace(go.Scatter(x=drawdowns.index,y=drawdowns[label],name=label,mode='lines',
+            legendgroup=label,showlegend=False,line=dict(color=palette.get(label),width=1.8),
+            hovertemplate='DD : %{y:.2f} %<extra>%{fullData.name}</extra>'),row=2,col=1)
+    figure.update_layout(title='Capital et drawdown — variantes sélectionnées',height=820,
+        hovermode='x unified',dragmode='zoom',margin=dict(l=15,r=15,t=85,b=150),
+        legend=dict(orientation='h',yanchor='top',y=-.13,xanchor='left',x=0,
+            groupclick='togglegroup',font=dict(size=10)))
     figure.update_xaxes(title=None,showgrid=True)
-    figure.update_yaxes(showgrid=True,tickformat=',.0f')
+    figure.update_yaxes(title_text='Capital ($), départ 4 000',showgrid=True,tickformat=',.0f',row=1,col=1)
+    figure.update_yaxes(title_text='DD aux clôtures (%)',showgrid=True,tickformat='.1f',
+        ticksuffix=' %',rangemode='tozero',row=2,col=1)
     return figure
 
 
@@ -195,7 +210,10 @@ def show_reference_comparison():
     if selected:
         st.plotly_chart(comparison_figure(curves,selected),width='stretch',key='bt_winner_compare_interactive',
             config=dict(displaylogo=False,scrollZoom=True))
-        st.caption('Survolez pour lire les valeurs ; zoomez sur une période. Double-cliquez pour rétablir la vue complète.')
+        st.caption('Les mêmes variantes et couleurs figurent dans les deux graphiques ; le zoom sur les dates est synchronisé. '
+            'Le DD aux clôtures mesure la baisse depuis le plus haut capital de clôture déjà atteint, capital initial inclus. '
+            'Il peut différer du DD intraday affiché dans les cases. '
+            'Double-cliquez pour rétablir la vue complète.')
         visible=table.set_index('Courbe').loc[selected].reset_index()
         st.dataframe(visible,hide_index=True,width='stretch')
     else:

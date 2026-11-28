@@ -260,3 +260,10 @@ Le choix des cases concerne uniquement l'affichage d'archives : aucun lancement,
 réglage de portefeuille, modèle ou ordre n'est modifié. Le classement par
 rendement sert à initialiser la vue ; il ne constitue pas une sélection de
 stratégie validée hors échantillon.
+
+Le graphique présente aussi le **drawdown aux clôtures**, sous les courbes de
+capital. Les deux panneaux reprennent les mêmes cases, couleurs et périodes,
+avec un zoom temporel synchronisé. Le DD vaut `100 × (capital / plus haut
+capital de clôture déjà atteint − 1)`, en incluant les 4 000 USD initiaux dans
+le sommet de référence. Il ne s’agit pas du DD intraday indiqué dans certaines
+cases ; les minima correspondent à la colonne « DD sur clôtures (%) ».

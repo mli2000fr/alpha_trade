@@ -84,4 +84,5 @@ def test_archived_popup_reports_comparable_daily_drawdowns():
     assert curves.iloc[-1,6]==pytest.approx(16140.820229817295)
     assert curves.iloc[-1,7]==pytest.approx(18593.485021063672)
     figure=comparison_figure(curves)
-    assert [line.name for line in figure.data]==list(CURVE_LABELS)
+    assert [line.name for line in figure.data if line.yaxis=='y']==list(CURVE_LABELS)
+    assert [line.name for line in figure.data if line.yaxis=='y2']==list(CURVE_LABELS)
