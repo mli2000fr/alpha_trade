@@ -194,7 +194,8 @@ def render_reconstruction_guide():
     except OSError:
         st.caption('Certaines annexes sont absentes ; le document principal reste disponible.')
     with st.expander('📘 Lire le guide complet dans cette fenêtre'):
-        st.markdown(content)
+        with st.container(height=900,border=False):
+            st.markdown(content)
 
 
 @st.dialog('Comparaison interactive des stratégies et de SPY',width='large')
