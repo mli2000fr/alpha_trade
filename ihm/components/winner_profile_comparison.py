@@ -1,5 +1,8 @@
 """Show the archived reference, independently of the current form's edits."""
 import json
+import hashlib
+from io import BytesIO
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -12,10 +15,16 @@ VARIANTS=PROJECT/'artifacts/research/us_q051_selection_variants/20261115-v1'
 CLASSIC=PROJECT/'artifacts/research/us_q051_classic_top10/20261115-v1'
 FEATURE_GROUPS=PROJECT/'artifacts/research/us_q051_feature_groups/20261116-lot1'
 ANTI_SL=PROJECT/'artifacts/research/us_q051_b_early_sl/20261116-v1'
+ENTRY_CEILING=PROJECT/'artifacts/research/us_q051_entry_ceiling/20261127-v1'
+GUIDE=PROJECT/'doc/backtesting/guide_reconstruction_comparaison_q051.md'
+GUIDE_ANNEX_FILES=('contrats_et_configurations.json','modeles_annuels.csv',
+    'fenetres_per_symbol_long.csv','folds_oracle.csv','tetes_anti_sl.csv','variables.json',
+    'univers_q051.txt','univers_b.txt','integrite_documentation.json')
 CURVE_LABELS=('Q051 témoin — TOP5','Volatilité 20 % + régime — TOP5',
               'Volatilité 20 % + régime — TOP10','Q051 témoin — TOP10',
               'Témoin B — 24 variables, mêmes Oracle','B seul — 29 variables, TOP10',
-              'B + anti-SL témoin — TOP10','SPY')
+              'B + anti-SL témoin — TOP10',
+              'Q051 témoin TOP10 — plafond, attente deux séances','SPY')
 
 
 def comparison_data():
@@ -28,6 +37,7 @@ def comparison_data():
         (CURVE_LABELS[4],FEATURE_GROUPS/'variants/T0/cases/T0_SIMPLE/result',FEATURE_GROUPS/'validation.json'),
         (CURVE_LABELS[5],FEATURE_GROUPS/'variants/B/cases/B_SIMPLE/result',FEATURE_GROUPS/'validation.json'),
         (CURVE_LABELS[6],ANTI_SL/'cases/SL10/result',ANTI_SL/'selection-validation.json'),
+        (CURVE_LABELS[7],ENTRY_CEILING/'cases/CAP_WAIT2/result',ENTRY_CEILING/'validation.json'),
     ]
     rows=[];curves=[]
     for label,folder,validation in specifications:
@@ -47,6 +57,12 @@ def comparison_data():
                     or read(ANTI_SL/'oracle-oof-causality.json').get('status')!='PASS'
                     or read(ANTI_SL/'selection-validation.json').get('no_refill') is not True):
                 raise ValueError(f'Contrôles de l’archive anti-SL absents ou invalides : {label}')
+        if folder.is_relative_to(ENTRY_CEILING):
+            audit=read(ENTRY_CEILING/'validation.json')
+            checks=[c for c in audit.get('checks',[]) if c.get('case')=='CAP_WAIT2']
+            if (audit.get('baseline_exact') is not True or audit.get('configurations_identical') is not True
+                    or len(checks)!=1 or checks[0].get('status')!='PASS'):
+                raise ValueError(f'Contrôles du plafond d’entrée absents ou invalides : {label}')
         r=read(folder/'report.json')
         equity=pd.read_csv(folder/'equity-daily.csv',index_col=0,parse_dates=True).iloc[:,0].astype(float)
         if equity.index.has_duplicates or not equity.index.is_monotonic_increasing:
@@ -80,21 +96,109 @@ def reference_comparison():
     return table,models
 
 
-def comparison_figure(curves):
-    # Fully local rendering, including on PCs without interactive chart extras.
-    from matplotlib.figure import Figure
-    figure=Figure(figsize=(12,6),layout='constrained')
-    ax=figure.subplots()
-    colors=['#2455cc','#008f72','#ee8b22','#8c44ac','#b17b28','#ce3458','#009eb1','#737373']
-    for label,color in zip(CURVE_LABELS,colors):
-        ax.plot(curves.index,curves[label],label=label,color=color,linewidth=1.4)
-    ax.set_title('Q051, B seul, B + anti-SL et SPY — capital valorisé')
-    ax.set_ylabel('Capital ($), départ 4 000');ax.grid(alpha=.2)
-    ax.legend(loc='upper left',fontsize=9)
+def default_curve_labels(table, count=5):
+    """Display defaults only; never a trading selection or a model ranking."""
+    return table.sort_values(['Rendement (%)','Courbe'],ascending=[False,True]).head(count)['Courbe'].tolist()
+
+
+def curve_checkbox_key(label):
+    return 'bt_winner_compare_curve_'+hashlib.sha256(label.encode('utf-8')).hexdigest()[:16]
+
+
+def closing_drawdowns(curves):
+    """Loss from the running closing peak, including the initial $4,000."""
+    return 100.*(curves/curves.cummax().clip(lower=4000.)-1.)
+
+
+def comparison_figure(curves, selected=None):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    figure=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=.10,
+        row_heights=[.65,.35],subplot_titles=('Capital valorisé','Drawdown aux clôtures'))
+    colors=['#2455cc','#008f72','#ee8b22','#8c44ac','#b17b28','#ce3458','#009eb1','#00a35b','#737373']
+    palette=dict(zip(CURVE_LABELS,colors))
+    labels=list(curves) if selected is None else selected
+    drawdowns=closing_drawdowns(curves.loc[:,labels])
+    for label in labels:
+        figure.add_trace(go.Scatter(x=curves.index,y=curves[label],name=label,mode='lines',
+            legendgroup=label,line=dict(color=palette.get(label),width=1.8),
+            hovertemplate='%{y:,.2f} $<extra>%{fullData.name}</extra>'),row=1,col=1)
+    for label in labels:
+        figure.add_trace(go.Scatter(x=drawdowns.index,y=drawdowns[label],name=label,mode='lines',
+            legendgroup=label,showlegend=False,line=dict(color=palette.get(label),width=1.8),
+            hovertemplate='DD : %{y:.2f} %<extra>%{fullData.name}</extra>'),row=2,col=1)
+    figure.update_layout(title='Capital et drawdown — variantes sélectionnées',height=820,
+        hovermode='x unified',dragmode='zoom',margin=dict(l=15,r=15,t=85,b=150),
+        legend=dict(orientation='h',yanchor='top',y=-.13,xanchor='left',x=0,
+            groupclick='togglegroup',font=dict(size=10)))
+    figure.update_xaxes(title=None,showgrid=True)
+    figure.update_yaxes(title_text='Capital ($), départ 4 000',showgrid=True,tickformat=',.0f',row=1,col=1)
+    figure.update_yaxes(title_text='DD aux clôtures (%)',showgrid=True,tickformat='.1f',
+        ticksuffix=' %',rangemode='tozero',row=2,col=1)
     return figure
 
 
-@st.dialog('Q051, B et B + anti-SL — comparaison avec SPY',width='large')
+def _reset_curve_selection(labels, defaults):
+    for label in labels:st.session_state[curve_checkbox_key(label)]=label in defaults
+
+
+def render_curve_selection(table):
+    ordered=table.sort_values(['Rendement (%)','Courbe'],ascending=[False,True])
+    defaults=default_curve_labels(table)
+    st.markdown('**Variantes à afficher**')
+    st.caption('Les cinq plus grands rendements historiques sont cochés à la première ouverture. '
+               'Vos choix sont conservés pendant la session ; cela ne modifie pas le profil du backtest.')
+    st.button('Recocher les cinq meilleurs rendements',key='bt_winner_compare_top5',
+        on_click=_reset_curve_selection,args=(ordered['Courbe'].tolist(),defaults))
+    columns=st.columns(2);selected=[]
+    for i,row in enumerate(ordered.to_dict('records')):
+        label=row['Courbe'];value=f"{row['Rendement (%)']:+.2f}".replace('.',',')
+        intraday=row.get('DD intraday (%)')
+        dd=intraday if pd.notna(intraday) else row.get('DD sur clôtures (%)')
+        dd_label=(f"DD max {dd:.2f} %".replace('.',',') if pd.notna(dd) else 'DD max indisponible')
+        if pd.isna(intraday) and pd.notna(dd):dd_label+=' (clôtures)'
+        with columns[i%2]:
+            if st.checkbox(f'{label} · {value} % · {dd_label}',value=label in defaults,key=curve_checkbox_key(label)):
+                selected.append(label)
+    return selected
+
+
+def guide_files():
+    return [GUIDE,*[GUIDE.parent/'reconstruction_q051'/name for name in GUIDE_ANNEX_FILES]]
+
+
+@st.cache_data(max_entries=4,show_spinner=False)
+def _guide_bundle(revision):
+    buffer=BytesIO()
+    with zipfile.ZipFile(buffer,'w',compression=zipfile.ZIP_DEFLATED) as package:
+        for name,_,_ in revision:
+            path=Path(name)
+            package.write(path,arcname=path.relative_to(GUIDE.parent).as_posix())
+    return buffer.getvalue()
+
+
+def render_reconstruction_guide():
+    try:
+        content=GUIDE.read_text(encoding='utf-8')
+    except OSError:
+        st.caption('Le guide détaillé de reconstruction est absent de cette installation.')
+        return
+    st.download_button('📘 Guide détaillé — entraînement → backtest (.md)',
+        data=content.encode('utf-8'),file_name=GUIDE.name,mime='text/markdown',
+        key='bt_winner_compare_guide_md',on_click='ignore')
+    try:
+        revision=tuple((str(p),p.stat().st_mtime_ns,p.stat().st_size) for p in guide_files())
+        st.download_button('Guide et annexes de reconstruction (ZIP)',data=_guide_bundle(revision),
+            file_name='guide_reconstruction_comparaison_q051.zip',mime='application/zip',
+            key='bt_winner_compare_guide_zip',on_click='ignore')
+    except OSError:
+        st.caption('Certaines annexes sont absentes ; le document principal reste disponible.')
+    with st.expander('📘 Lire le guide complet dans cette fenêtre'):
+        with st.container(height=900,border=False):
+            st.markdown(content)
+
+
+@st.dialog('Comparaison interactive des stratégies et de SPY',width='large')
 def show_reference_comparison():
     try:
         table,curves,models=comparison_data()
@@ -102,8 +206,19 @@ def show_reference_comparison():
         st.warning(f'Comparaison archivée indisponible sur ce PC : {exc}')
         return
     st.caption('Référence du 01/01/2021 au 01/10/2026 · 4 000 $ initiaux · capital continu, sans remise à zéro annuelle.')
-    st.pyplot(comparison_figure(curves),width='stretch')
-    st.dataframe(table,hide_index=True,width='stretch')
+    render_reconstruction_guide()
+    selected=render_curve_selection(table)
+    if selected:
+        st.plotly_chart(comparison_figure(curves,selected),width='stretch',key='bt_winner_compare_interactive',
+            config=dict(displaylogo=False,scrollZoom=True))
+        st.caption('Les mêmes variantes et couleurs figurent dans les deux graphiques ; le zoom sur les dates est synchronisé. '
+            'Le DD aux clôtures mesure la baisse depuis le plus haut capital de clôture déjà atteint, capital initial inclus. '
+            'Il peut différer du DD intraday affiché dans les cases. '
+            'Double-cliquez pour rétablir la vue complète.')
+        visible=table.set_index('Courbe').loc[selected].reset_index()
+        st.dataframe(visible,hide_index=True,width='stretch')
+    else:
+        st.info('Cochez au moins une variante pour afficher les courbes et leur comparaison.')
     st.caption('Comparer le DD sur clôtures pour les courbes. Le DD intraday SPY n’est pas disponible. '
         'Stratégies : frais et financement inclus. SPY : cours seuls, sans dividendes ni frais. '
         'Couverture 5m incomplète avec protections daily de secours ; résultats exploratoires.')
@@ -122,6 +237,14 @@ def show_reference_comparison():
             'Le témoin TOP5 vaut +206,51 % ; le témoin TOP10 vaut +280,94 %. '
             'Avec vol20 + régime, TOP5 vaut +125,98 % et TOP10 +150,90 %. '
             'Les résultats présentés sont ceux des archives annuelles, pas une prévision pour le formulaire courant.')
+        st.write('Plafond avec attente de deux séances : basé sur Q051 témoin TOP10, avec les mêmes modèles et risques. '
+            'Plafond fixé après J : clôture J + 0,5 × moyenne des vingt true ranges. '
+            'Achat à une ouverture observée sous ce plafond pendant J+1/J+2, sinon expiration ; '
+            'pas de remplissage simulé au seul toucher du plus bas. SL5 %, dix séances détenues, sortie open11. '
+            'Résultat : 18 593,49 $, +364,84 %, DD intraday −46,26 %, 34,63 % gagnants, 1 444 trades. '
+            'Le rendement augmente, mais le DD se dégrade face au témoin. Entrées tardives limitées aux journées '
+            '5m complètes qualifiées ex post : résultat exploratoire, sans certification de disponibilité live. '
+            'Cette courbe est une archive de recherche ; la cocher n’active pas ce mécanisme dans le backtest ou en production.')
         st.write('B seul utilise les mêmes réglages Q051 TOP10, avec cinq variables de volatilité supplémentaires '
             'dans les modèles par titre, soit 29. Ce ne sont ni le budget de volatilité du portefeuille ni un filtre de régime. '
             'B seul vaut +297,35 %, DD −40,99 %, 37,63 % gagnants ; sans pause100. '

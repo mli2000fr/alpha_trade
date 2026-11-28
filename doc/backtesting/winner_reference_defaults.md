@@ -235,3 +235,35 @@ d'ouverture connu est conservé pendant la séance, puis remplacé par la clôtu
 disponible. Ces relevés ne prétendent pas reproduire l'equity intraday inconnue.
 Le DD sur ce périmètre est celui des prix observables, pas le pire creux
 intraday possible. `equity-5m.csv` indique `daily_fallback_positions`.
+
+## Comparaison interactive des archives — 28 novembre 2026
+
+Le [guide complet de reconstruction](guide_reconstruction_comparaison_q051.md)
+documente les neuf courbes, depuis les entraînements annuels jusqu’aux contrôles
+du replay. La popin permet de le lire et de télécharger le document seul ou
+le ZIP contenant ses annexes (contrats, modèles, fenêtres et variables).
+
+Le bouton **Voir les courbes et leur comparaison** ouvre un graphique Plotly
+interactif : une case par variante, zoom et valeurs au survol. Les cinq plus
+grands rendements historiques sont cochés à la première ouverture. Les choix
+sont conservés dans la session ; **Recocher les cinq meilleurs rendements**
+rétablit cette sélection. Tout décocher affiche une invitation à sélectionner
+une variante, sans réactiver automatiquement des courbes.
+
+Le graphique et le tableau suivent la même sélection. Une neuvième courbe
+est disponible : **Q051 témoin TOP10 — plafond, attente deux séances**,
+18 593,49 USD / +364,84 % / DD intraday −46,26 % / 34,63 % gagnants.
+Elle charge les archives validées de
+`artifacts/research/us_q051_entry_ceiling/20261127-v1/cases/CAP_WAIT2/result`.
+La base reste Q051 TOP10, différente des Oracle annuels de la famille B.
+Le choix des cases concerne uniquement l'affichage d'archives : aucun lancement,
+réglage de portefeuille, modèle ou ordre n'est modifié. Le classement par
+rendement sert à initialiser la vue ; il ne constitue pas une sélection de
+stratégie validée hors échantillon.
+
+Le graphique présente aussi le **drawdown aux clôtures**, sous les courbes de
+capital. Les deux panneaux reprennent les mêmes cases, couleurs et périodes,
+avec un zoom temporel synchronisé. Le DD vaut `100 × (capital / plus haut
+capital de clôture déjà atteint − 1)`, en incluant les 4 000 USD initiaux dans
+le sommet de référence. Il ne s’agit pas du DD intraday indiqué dans certaines
+cases ; les minima correspondent à la colonne « DD sur clôtures (%) ».
